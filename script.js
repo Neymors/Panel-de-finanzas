@@ -21,7 +21,7 @@ const fmt = {
 const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
 
 // ─── UTILS DE CÁLCULO ────────────────────────────────────────
-function calculateDPT(holdings) {
+function calculateDPT(holdings = []) {
     if (!holdings || holdings.length === 0) return 0;
     const now = new Date();
     let totalQty = 0;
@@ -35,16 +35,12 @@ function calculateDPT(holdings) {
     return totalQty > 0 ? Math.round(weightedDays / totalQty) : 0;
 }
 
-// ─── FETCHING CON ERROR HANDLING ─────────────────────────────
+// ─── FETCHING ────────────────────────────────────────────────
 async function fetchViaProxy(url) {
     try {
         const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
-    } catch (e) {
-        console.warn(`Error fetching ${url}:`, e);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 async function getPrice(ticker, type) {
@@ -53,61 +49,49 @@ async function getPrice(ticker, type) {
             const map = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
             const id = map[ticker] || ticker.toLowerCase();
             const data = await fetchViaProxy(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
-            if (!data || !data[id]) throw new Error('No data from CoinGecko');
-            return { price: data[id].usd, change: data[id].usd_24h_change || 0 };
+            return { price: data[id].usd, change: data[id].usd_24h_change };
         } else {
             const symbol = type === 'ar' ? (ticker.includes('.') ? ticker : `${ticker}.BA`) : ticker;
             const data = await fetchViaProxy(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`);
-            if (!data?.chart?.result?.[0]?.meta) throw new Error('No data from Yahoo Finance');
             const meta = data.chart.result[0].meta;
             return { price: meta.regularMarketPrice, change: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100 };
         }
-    } catch (e) {
-        console.error(`Error obteniendo precio para ${ticker} (${type}):`, e);
-        return { price: 0, change: 0 };  // fallback seguro
-    }
+    } catch (e) { return { price: 0, change: 0 }; }
 }
 
 // ─── RENDER ──────────────────────────────────────────────────
 function renderAll() {
     let totalPortfolioUSD = 0;
     const tbody = el('posTable');
-    const errorMsgDiv = el('addError');
-    
-    // Validar MEP para activos argentinos
-    if (!mepRate && positions.some(p => p.type === 'ar')) {
-        errorMsgDiv.innerText = '⚠️ No se pudo obtener el dólar MEP. Los valores en USD pueden ser incorrectos.';
-    } else {
-        errorMsgDiv.innerText = '';
-    }
-    
-    // Calcular Valor Total
+    if (!tbody) return;
+
+    // Mapeo seguro con fallback para holdings
     const processed = positions.map(pos => {
         const info = priceCache[pos.ticker] || { price: 0, change: 0 };
-        const qty = pos.holdings.reduce((s, h) => s + h.qty, 0);
-        const effectiveMep = (mepRate && mepRate > 0) ? mepRate : 1;
-        const valUSD = pos.type === 'ar' ? (info.price * qty / effectiveMep) : (info.price * qty);
+        const holdings = pos.holdings || []; // SOLUCIÓN AL ERROR: Fallback a array vacío
+        const qty = holdings.reduce((s, h) => s + h.qty, 0);
+        const valUSD = pos.type === 'ar' ? (info.price * qty / (mepRate || 1)) : (info.price * qty);
         totalPortfolioUSD += valUSD;
-        return { pos, info, qty, valUSD };
+        return { pos, info, qty, valUSD, holdings };
     });
 
     el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
 
     if (processed.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">Agregá tu primera posición arriba ↑</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">No hay posiciones</td></tr>';
         return;
     }
 
-    // Generar Filas
     tbody.innerHTML = processed.map((item, i) => {
-        const { pos, info, qty, valUSD } = item;
-        const ppc = pos.holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
-        const tenencia = calculateDPT(pos.holdings);
+        const { pos, info, qty, valUSD, holdings } = item;
+        if (qty === 0) return ''; // Evitar filas vacías o errores de división
+
+        const ppc = holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
+        const tenencia = calculateDPT(holdings);
         const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
         
-        const totalCostUSD = pos.holdings.reduce((s, h) => {
-            const effectiveMep = (h.tc && h.tc > 0) ? h.tc : (mepRate || 1);
-            const cost = pos.type === 'ar' ? (h.price / effectiveMep) : h.price;
+        const totalCostUSD = holdings.reduce((s, h) => {
+            const cost = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) : h.price;
             return s + (cost * h.qty);
         }, 0);
         const pnl = valUSD - totalCostUSD;
@@ -133,51 +117,26 @@ function renderAll() {
 // ─── ACTIONS ─────────────────────────────────────────────────
 async function handleAdd(e) {
     if(e) e.preventDefault();
-    const errorDiv = el('addError');
-    errorDiv.innerText = '';
 
     const ticker = el('tickerInput').value.trim().toUpperCase();
     const qty = parseFloat(el('qtyInput').value);
     const ppc = parseFloat(el('avgInput').value);
-    let days = parseInt(el('daysInput').value);
-    if (isNaN(days)) days = 0;
+    const days = parseInt(el('daysInput').value) || 0;
 
-    if (!ticker) {
-        errorDiv.innerText = '❌ Ingresá un símbolo de activo.';
-        return;
-    }
-    if (isNaN(qty) || qty <= 0) {
-        errorDiv.innerText = '❌ Cantidad inválida.';
-        return;
-    }
-    if (isNaN(ppc) || ppc <= 0) {
-        errorDiv.innerText = '❌ Precio promedio inválido.';
-        return;
-    }
-
-    // Si el activo ya existe, verificar que sea del mismo tipo
-    const existingPos = positions.find(p => p.ticker === ticker);
-    if (existingPos && existingPos.type !== activeType) {
-        errorDiv.innerText = `❌ Ya tenés ${ticker} como ${existingPos.type === 'ar' ? 'Argentina' : existingPos.type === 'global' ? 'Global' : 'Cripto'}. Usá el mismo tipo o eliminá la posición anterior.`;
-        return;
-    }
+    if (!ticker || isNaN(qty) || isNaN(ppc)) return;
 
     const purchaseDate = new Date();
     purchaseDate.setDate(purchaseDate.getDate() - days);
 
-    const holding = { 
-        qty, 
-        price: ppc, 
-        date: purchaseDate.toISOString(), 
-        tc: mepRate   // guardamos el MEP al momento de la compra
-    };
+    const holding = { qty, price: ppc, date: purchaseDate.toISOString(), tc: mepRate };
+    const existing = positions.find(p => p.ticker === ticker);
 
-    if (existingPos) {
-        existingPos.holdings.push(holding);
+    if (existing) {
+        if (!existing.holdings) existing.holdings = [];
+        existing.holdings.push(holding);
     } else {
         positions.push({
-            ticker, 
-            type: activeType,
+            ticker, type: activeType,
             currency: activeType === 'ar' ? 'ARS' : 'USD',
             holdings: [holding]
         });
@@ -185,33 +144,17 @@ async function handleAdd(e) {
 
     lsSet(LS_POSITIONS, positions);
     
-    // Limpiar inputs
-    el('tickerInput').value = '';
-    el('qtyInput').value = '';
-    el('avgInput').value = '';
-    el('daysInput').value = '';
+    // Limpiar campos
+    ['tickerInput', 'qtyInput', 'avgInput', 'daysInput'].forEach(id => el(id).value = '');
 
-    // Intentar obtener precio actual (pero no bloquear si falla)
-    try {
-        const newPrice = await getPrice(ticker, activeType);
-        priceCache[ticker] = newPrice;
-    } catch (err) {
-        console.warn(`No se pudo obtener precio actual para ${ticker}`, err);
-        priceCache[ticker] = { price: 0, change: 0 };
-        errorDiv.innerText = `⚠️ Activo agregado, pero no se pudo obtener precio actual (mostrará 0).`;
-    }
-    
+    const newPrice = await getPrice(ticker, activeType);
+    priceCache[ticker] = newPrice;
     renderAll();
 }
 
 window.deletePos = (i) => {
     positions.splice(i, 1);
     lsSet(LS_POSITIONS, positions);
-    // Limpiar cache si ya no existe
-    const remainingTickers = new Set(positions.map(p => p.ticker));
-    Object.keys(priceCache).forEach(t => {
-        if (!remainingTickers.has(t)) delete priceCache[t];
-    });
     renderAll();
 };
 
@@ -219,42 +162,20 @@ window.deletePos = (i) => {
 async function init() {
     positions = lsGet(LS_POSITIONS) || [];
     
-    // Cargar MEP (pero no crítico)
-    try {
-        const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
-        if (mepData && mepData.venta) {
-            mepRate = parseFloat(mepData.venta);
-        } else {
-            console.warn('No se pudo obtener MEP');
-            mepRate = null;
-        }
-    } catch(e) {
-        console.warn('Error obteniendo MEP', e);
-        mepRate = null;
-    }
-    
-    if (el('sourceRow')) {
-        el('sourceRow').innerText = mepRate ? `Dólar MEP: $${mepRate.toFixed(2)}` : '⚠️ Sin dato de MEP';
-    }
+    // Cargar MEP
+    const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
+    if (mepData) mepRate = parseFloat(mepData.venta);
+    if (el('sourceRow')) el('sourceRow').innerText = mepRate ? `Dólar MEP: $${mepRate.toFixed(2)}` : 'Error cargando MEP';
 
-    // Cargar precios iniciales
+    // Cargar Precios
     if (positions.length > 0) {
-        const fetchPromises = positions.map(p => getPrice(p.ticker, p.type));
-        const results = await Promise.allSettled(fetchPromises);
-        results.forEach((result, idx) => {
-            const ticker = positions[idx].ticker;
-            if (result.status === 'fulfilled') {
-                priceCache[ticker] = result.value;
-            } else {
-                console.warn(`Fallo al cargar precio inicial para ${ticker}`);
-                priceCache[ticker] = { price: 0, change: 0 };
-            }
-        });
+        const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
+        positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
     }
 
     renderAll();
 
-    // Event Listeners
+    // Eventos
     el('addBtn').onclick = handleAdd;
     
     document.querySelectorAll('.type-btn').forEach(btn => {
