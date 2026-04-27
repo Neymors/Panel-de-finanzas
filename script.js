@@ -1,6 +1,5 @@
 'use strict';
 
-// ─── CONSTANTES Y ESTADO ─────────────────────────────────────
 const PROXY = '/api/proxy';
 const LS_POSITIONS = 'portfolio_positions_v2';
 let positions = []; 
@@ -13,35 +12,130 @@ const lsGet = (key) => JSON.parse(localStorage.getItem(key));
 const lsSet = (key, val) => localStorage.setItem(key, JSON.stringify(val));
 
 const fmt = {
-    usd: v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
-    ars: v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
-    pct: v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%',
+    usd: v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
+    ars: v => '$' + v.toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
+    pct: v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%',
 };
 
-const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
+const colorClass = (v) => v > 0 ? 'pos' : (v < 0 ? 'neg' : '');
 
-// ─── UTILS DE CÁLCULO ────────────────────────────────────────
-function calculateDPT(holdings = []) {
-    if (!holdings || holdings.length === 0) return 0;
-    const now = new Date();
-    let totalQty = 0;
-    let weightedDays = 0;
-    holdings.forEach(h => {
-        const diffTime = Math.abs(now - new Date(h.date));
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        weightedDays += (diffDays * h.qty);
-        totalQty += h.qty;
+// ─── LÓGICA DE MÉTRICAS SUPERIORES ────────────────────────────
+function updateTopMetrics(processed, totalVal) {
+    // 1. Cantidad de posiciones
+    if (el('activeCount')) el('activeCount').innerText = processed.length;
+
+    // 2. Ganancia Total y Mejor Hoy
+    let totalGain = 0;
+    let bestToday = { ticker: '—', change: -Infinity };
+
+    processed.forEach(item => {
+        totalGain += item.pnl;
+        if (item.info.change > bestToday.change) {
+            bestToday = { ticker: item.pos.ticker, change: item.info.change };
+        }
     });
-    return totalQty > 0 ? Math.round(weightedDays / totalQty) : 0;
+
+    if (el('totalGain')) el('totalGain').innerText = fmt.usd(totalGain);
+    if (el('totalGainPct')) el('totalGainPct').innerText = processed.length ? fmt.pct((totalGain / (totalVal - totalGain)) * 100) : '0.00%';
+    
+    if (el('bestTodayTicker')) el('bestTodayTicker').innerText = bestToday.ticker;
+    if (el('bestTodayPct')) {
+        el('bestTodayPct').innerText = bestToday.change !== -Infinity ? fmt.pct(bestToday.change) : '—';
+        el('bestTodayPct').className = 'metric-val ' + colorClass(bestToday.change);
+    }
 }
 
-// ─── FETCHING ────────────────────────────────────────────────
-async function fetchViaProxy(url) {
-    try {
-        const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
-        return await res.json();
-    } catch (e) { return null; }
+// ─── CORE RENDER ──────────────────────────────────────────────
+function renderAll() {
+    let totalPortfolioUSD = 0;
+    const tbody = el('posTable');
+    
+    const processed = positions.map(pos => {
+        const info = priceCache[pos.ticker] || { price: 0, change: 0 };
+        const holdings = pos.holdings || [];
+        const qty = holdings.reduce((s, h) => s + h.qty, 0);
+        const valUSD = pos.type === 'ar' ? (info.price * qty / (mepRate || 1)) : (info.price * qty);
+        
+        const totalCostUSD = holdings.reduce((s, h) => {
+            const cost = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) : h.price;
+            return s + (cost * h.qty);
+        }, 0);
+
+        totalPortfolioUSD += valUSD;
+        return { pos, info, qty, valUSD, holdings, pnl: valUSD - totalCostUSD, cost: totalCostUSD };
+    });
+
+    el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
+    
+    // Actualizamos las tarjetitas de arriba
+    updateTopMetrics(processed, totalPortfolioUSD);
+
+    if (!processed.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">No hay posiciones</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = processed.map((item, i) => {
+        const { pos, info, qty, valUSD, holdings, pnl, cost } = item;
+        const ppc = holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
+        const performance = cost > 0 ? (pnl / cost) * 100 : 0;
+        const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
+
+        return `
+            <tr>
+                <td><strong>${pos.ticker}</strong></td>
+                <td>${pos.type === 'ar' ? fmt.ars(info.price) : fmt.usd(info.price)}</td>
+                <td class="${colorClass(info.change)}">${fmt.pct(info.change)}</td>
+                <td>${qty.toFixed(2)}</td>
+                <td>${pos.type === 'ar' ? fmt.ars(ppc) : fmt.usd(ppc)}</td>
+                <td>${Math.ceil(Math.abs(new Date() - new Date(holdings[0].date)) / (1000*60*60*24))} d</td>
+                <td>${weight.toFixed(1)}%</td>
+                <td class="${colorClass(pnl)}">${fmt.usd(pnl)}</td>
+                <td class="${colorClass(performance)}">${fmt.pct(performance)}</td>
+                <td><button class="del-btn" onclick="deletePos(${i})">✕</button></td>
+            </tr>
+        `;
+    }).join('');
 }
+
+// ─── AGREGAR POSICIÓN ─────────────────────────────────────────
+async function handleAdd(e) {
+    if(e) e.preventDefault();
+    const ticker = el('tickerInput').value.trim().toUpperCase();
+    const qty = parseFloat(el('qtyInput').value);
+    const ppc = parseFloat(el('avgInput').value);
+    const days = parseInt(el('daysInput').value) || 0;
+
+    if (!ticker || isNaN(qty) || isNaN(ppc)) return;
+
+    const purchaseDate = new Date();
+    purchaseDate.setDate(purchaseDate.getDate() - days);
+
+    const newHolding = { qty, price: ppc, date: purchaseDate.toISOString(), tc: mepRate };
+    const existing = positions.find(p => p.ticker === ticker);
+
+    if (existing) {
+        if (!existing.holdings) existing.holdings = [];
+        existing.holdings.push(newHolding);
+    } else {
+        positions.push({ ticker, type: activeType, holdings: [newHolding] });
+    }
+
+    lsSet(LS_POSITIONS, positions);
+    const freshPrice = await getPrice(ticker, activeType);
+    priceCache[ticker] = freshPrice;
+    
+    ['tickerInput', 'qtyInput', 'avgInput', 'daysInput'].forEach(id => el(id).value = '');
+    renderAll();
+}
+
+// (Las funciones getPrice, fetchViaProxy, deletePos e init se mantienen igual que la anterior)
+
+window.deletePos = (i) => {
+    positions.splice(i, 1);
+    lsSet(LS_POSITIONS, positions);
+    renderAll();
+};
 
 async function getPrice(ticker, type) {
     try {
@@ -59,128 +153,27 @@ async function getPrice(ticker, type) {
     } catch (e) { return { price: 0, change: 0 }; }
 }
 
-// ─── RENDER ──────────────────────────────────────────────────
-function renderAll() {
-    let totalPortfolioUSD = 0;
-    const tbody = el('posTable');
-    if (!tbody) return;
-
-    // Mapeo seguro con fallback para holdings
-    const processed = positions.map(pos => {
-        const info = priceCache[pos.ticker] || { price: 0, change: 0 };
-        const holdings = pos.holdings || []; // SOLUCIÓN AL ERROR: Fallback a array vacío
-        const qty = holdings.reduce((s, h) => s + h.qty, 0);
-        const valUSD = pos.type === 'ar' ? (info.price * qty / (mepRate || 1)) : (info.price * qty);
-        totalPortfolioUSD += valUSD;
-        return { pos, info, qty, valUSD, holdings };
-    });
-
-    el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
-
-    if (processed.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">No hay posiciones</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = processed.map((item, i) => {
-        const { pos, info, qty, valUSD, holdings } = item;
-        if (qty === 0) return ''; // Evitar filas vacías o errores de división
-
-        const ppc = holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
-        const tenencia = calculateDPT(holdings);
-        const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
-        
-        const totalCostUSD = holdings.reduce((s, h) => {
-            const cost = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) : h.price;
-            return s + (cost * h.qty);
-        }, 0);
-        const pnl = valUSD - totalCostUSD;
-        const per = totalCostUSD > 0 ? (pnl / totalCostUSD) * 100 : 0;
-
-        return `
-            <tr>
-                <td><strong>${pos.ticker}</strong></td>
-                <td>${pos.type === 'ar' ? fmt.ars(info.price) : fmt.usd(info.price)}</td>
-                <td class="${colorClass(info.change)}">${fmt.pct(info.change)}</td>
-                <td>${qty.toFixed(2)}</td>
-                <td>${pos.type === 'ar' ? fmt.ars(ppc) : fmt.usd(ppc)}</td>
-                <td>${tenencia} días</td>
-                <td>${weight.toFixed(1)}%</td>
-                <td class="${colorClass(pnl)}">${fmt.usd(pnl)}</td>
-                <td class="${colorClass(per)}">${fmt.pct(per)}</td>
-                <td><button class="del-btn" onclick="deletePos(${i})">✕</button></td>
-            </tr>
-        `;
-    }).join('');
+async function fetchViaProxy(url) {
+    try {
+        const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
+        return await res.json();
+    } catch (e) { return null; }
 }
 
-// ─── ACTIONS ─────────────────────────────────────────────────
-async function handleAdd(e) {
-    if(e) e.preventDefault();
-
-    const ticker = el('tickerInput').value.trim().toUpperCase();
-    const qty = parseFloat(el('qtyInput').value);
-    const ppc = parseFloat(el('avgInput').value);
-    const days = parseInt(el('daysInput').value) || 0;
-
-    if (!ticker || isNaN(qty) || isNaN(ppc)) return;
-
-    const purchaseDate = new Date();
-    purchaseDate.setDate(purchaseDate.getDate() - days);
-
-    const holding = { qty, price: ppc, date: purchaseDate.toISOString(), tc: mepRate };
-    const existing = positions.find(p => p.ticker === ticker);
-
-    if (existing) {
-        if (!existing.holdings) existing.holdings = [];
-        existing.holdings.push(holding);
-    } else {
-        positions.push({
-            ticker, type: activeType,
-            currency: activeType === 'ar' ? 'ARS' : 'USD',
-            holdings: [holding]
-        });
-    }
-
-    lsSet(LS_POSITIONS, positions);
-    
-    // Limpiar campos
-    ['tickerInput', 'qtyInput', 'avgInput', 'daysInput'].forEach(id => el(id).value = '');
-
-    const newPrice = await getPrice(ticker, activeType);
-    priceCache[ticker] = newPrice;
-    renderAll();
-}
-
-window.deletePos = (i) => {
-    positions.splice(i, 1);
-    lsSet(LS_POSITIONS, positions);
-    renderAll();
-};
-
-// ─── INIT ─────────────────────────────────────────────────────
 async function init() {
     positions = lsGet(LS_POSITIONS) || [];
-    
-    // Cargar MEP
     const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
     if (mepData) mepRate = parseFloat(mepData.venta);
-    if (el('sourceRow')) el('sourceRow').innerText = mepRate ? `Dólar MEP: $${mepRate.toFixed(2)}` : 'Error cargando MEP';
-
-    // Cargar Precios
+    
     if (positions.length > 0) {
         const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
         positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
     }
-
     renderAll();
 
-    // Eventos
     el('addBtn').onclick = handleAdd;
-    
     document.querySelectorAll('.type-btn').forEach(btn => {
-        btn.onclick = (e) => {
-            e.preventDefault();
+        btn.onclick = () => {
             document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeType = btn.dataset.type;
