@@ -298,13 +298,12 @@ body {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    align-items: flex-start;
+    align-items: stretch;
 }
 
 .form-row input {
     flex: 1;
-    min-width: 120px;
-    max-width: 220px;
+    min-width: 100px;
     font-size: 14px;
     font-family: sans-serif;
     padding: 9px 12px;
@@ -327,15 +326,20 @@ body {
 
 #tickerInput {
     text-transform: uppercase;
-    max-width: 200px;
+    min-width: 90px;
+    flex: 0 1 120px;
 }
 
 #qtyInput {
-    max-width: 110px;
+    flex: 0 1 100px;
 }
 
 #avgInput {
-    max-width: 160px;
+    flex: 0 1 140px;
+}
+
+#daysInput {
+    flex: 0 1 120px;
 }
 
 .add-btn {
@@ -349,6 +353,8 @@ body {
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.15s;
+    flex: 0 0 auto;
+    height: fit-content;
 }
 
 .add-btn:hover {
