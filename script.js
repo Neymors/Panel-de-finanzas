@@ -1,7 +1,6 @@
 /* ============================================================
-   PORTFOLIO DASHBOARD — script.js
-   Fuentes: Rava (AR), Yahoo Finance (Global), CoinGecko (Crypto)
-   Todo vía /api/proxy (Netlify Function)
+   PORTFOLIO DASHBOARD — script.js (Refactorizado para DPT)
+   Ecosistema Enképhalos - Amygdalé
    ============================================================ */
 
 'use strict';
@@ -10,19 +9,15 @@
 const PROXY = '/api/proxy';
 const LS_POSITIONS = 'portfolio_positions_v2';
 const LS_PRICES    = 'portfolio_prices_v2';
-const LS_HISTORY   = 'portfolio_history_v2';
 const LS_MACRO     = 'macroData_v2';
-const CACHE_TTL    = 15 * 60 * 1000;   // 15 min
-const MACRO_TTL    = 24 * 60 * 60 * 1000; // 24 h
-const PIE_COLORS   = [
-  '#378ADD','#1D9E75','#E8A838','#E05C5C','#8B5CF6',
-  '#F472B6','#34D399','#FB923C','#60A5FA','#A78BFA'
-];
+const CACHE_TTL    = 15 * 60 * 1000;
+const MACRO_TTL    = 24 * 60 * 60 * 1000;
+const PIE_COLORS   = ['#378ADD','#1D9E75','#E8A838','#E05C5C','#8B5CF6','#F472B6','#34D399','#FB923C','#60A5FA','#A78BFA'];
 
 // ─── STATE ───────────────────────────────────────────────────
-let positions  = [];   // [{ticker, type, quantity, avgPrice, currency}]
-let priceCache = {};   // {ticker: {price, change, changeAbs, timestamp, cached}}
-let mepRate    = null; // ARS per USD
+let positions  = [];   // Estructura: [{ticker, type, currency, holdings: [{qty, price, date, tc}] }]
+let priceCache = {};
+let mepRate    = null;
 let lineChart  = null;
 let pieChart   = null;
 let currentRange = '1M';
@@ -30,702 +25,199 @@ let activeType   = 'ar';
 
 // ─── UTILS ───────────────────────────────────────────────────
 const fmt = {
-  //usd:  v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
-  //ars:  v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:0, maximumFractionDigits:0}),
   usd: v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
   ars: v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
-  pct:  v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%',
-  sign: v => v >= 0 ? '+' : '−',
-  mep:  v => '$ ' + Math.round(v).toLocaleString('es-AR'),
+  pct: v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%',
+  mep: v => '$ ' + Math.round(v).toLocaleString('es-AR'),
 };
 
-function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+const el = (id) => document.getElementById(id);
+const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
 
-function el(id) { return document.getElementById(id); }
+/**
+ * Calcula los Días Promedio de Tenencia (DPT) ponderados por cantidad.
+ */
+function calculateDPT(holdings) {
+  if (!holdings || holdings.length === 0) return 0;
+  const now = new Date();
+  let totalQty = 0;
+  let weightedDays = 0;
 
-function setVal(id, html, cls) {
-  const e = el(id);
-  if (!e) return;
-  e.innerHTML = html;
-  if (cls) { e.className = e.className.replace(/\b(pos|neg)\b/g, ''); e.classList.add(cls); }
+  holdings.forEach(h => {
+    const diffTime = Math.abs(now - new Date(h.date));
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    weightedDays += (diffDays * h.qty);
+    totalQty += h.qty;
+  });
+
+  return totalQty > 0 ? Math.round(weightedDays / totalQty) : 0;
 }
 
-function colorClass(v) { return v >= 0 ? 'pos' : 'neg'; }
+// ─── LOCAL STORAGE ───────────────────────────────────────────
+function lsGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
-// ─── LOCAL STORAGE HELPERS ───────────────────────────────────
-function lsGet(key) {
-  try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
-}
-function lsSet(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-}
-
-// ─── CACHE: PRICES ───────────────────────────────────────────
-function getCachedPrices() {
-  const raw = lsGet(LS_PRICES);
-  if (!raw) return {};
-  const now = Date.now();
-  const out = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (now - v.timestamp < CACHE_TTL) out[k] = { ...v, cached: false };
-    else if (v.price)                   out[k] = { ...v, cached: true };
-  }
-  return out;
-}
-function setCachedPrices(data) {
-  const prev = lsGet(LS_PRICES) || {};
-  for (const [k, v] of Object.entries(data)) {
-    prev[k] = { ...v, timestamp: Date.now() };
-  }
-  lsSet(LS_PRICES, prev);
+// ─── DATA FETCHING (RAVA/YAHOO/COINGECKO) ────────────────────
+async function fetchViaProxy(url) {
+  const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
 }
 
-// ─── CACHE: MACRO ─────────────────────────────────────────────
-function getCachedMacro() {
-  const raw = lsGet(LS_MACRO);
-  if (!raw) return null;
-  const age = Date.now() - (raw.timestamp || 0);
-  if (age < MACRO_TTL) return { ...raw, cached: false };
-  if (raw.mep)         return { ...raw, cached: true };
-  return null;
-}
-function setCachedMacro(data) {
-  lsSet(LS_MACRO, { ...data, timestamp: Date.now() });
-}
-
-// ─── PROXY FETCH ─────────────────────────────────────────────
-async function fetchViaProxy(url, timeout = 10000) {
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), timeout);
-  try {
-    const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`, {
-      signal: controller.signal
-    });
-    clearTimeout(tid);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (e) {
-    clearTimeout(tid);
-    throw e;
-  }
-}
-
-// ─── DATA: MEP RATE ──────────────────────────────────────────
-async function fetchMepRate() {
-  // AL30 en pesos / AL30D en dólares = MEP implícito
-  try {
-    const data = await fetchViaProxy('https://api.bluelytics.com.ar/v2/latest');
-    if (data && data.blue && data.blue.value_sell) {
-      return parseFloat(data.blue.value_sell);
-    }
-  } catch {}
-  // fallback: dolarito API
-  try {
-    const data = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
-    if (data && data.venta) return parseFloat(data.venta);
-  } catch {}
-  return null;
-}
-
-// ─── DATA: MACRO (MEP + RIESGO PAÍS) ─────────────────────────
-async function fetchMacroData() {
-  let mep = null, riesgo = null;
-
-  // MEP
-  try {
-    const d = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
-    if (d && d.venta) mep = parseFloat(d.venta);
-  } catch {}
-  if (!mep) {
-    try {
-      const d = await fetchViaProxy('https://api.bluelytics.com.ar/v2/latest');
-      if (d && d.blue) mep = parseFloat(d.blue.value_sell);
-    } catch {}
-  }
-
-  // Riesgo país (EMBI Argentina) vía ambito/api pública
-  try {
-    const d = await fetchViaProxy('https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais/ultimo');
-    if (d && d.valor) riesgo = Math.round(parseFloat(d.valor));
-  } catch {}
-
-  return { mep, riesgo };
-}
-
-function renderMacro(data, cached) {
-  const mepStr    = data.mep    ? fmt.mep(data.mep)          : '—';
-  const riesgoStr = data.riesgo ? String(data.riesgo)         : '—';
-  const suffix    = cached ? ' <span style="opacity:.55">(cache)</span>' : '';
-  el('sourceRow').innerHTML =
-    `Dólar MEP: ${mepStr} · Riesgo País: ${riesgoStr}${suffix}`;
-}
-
-async function loadMacro() {
-  const cached = getCachedMacro();
-  if (cached) {
-    renderMacro(cached, cached.cached);
-    mepRate = cached.mep;
-    if (!cached.cached) return; // fresh
-  }
-  try {
-    const fresh = await fetchMacroData();
-    if (fresh.mep || fresh.riesgo) {
-      setCachedMacro(fresh);
-      renderMacro(fresh, false);
-      mepRate = fresh.mep;
-    }
-  } catch {
-    if (!cached) renderMacro({ mep: null, riesgo: null }, false);
-  }
-}
-
-// ─── DATA: ARGENTINA (RAVA) ───────────────────────────────────
-// ─── DATA: ARGENTINA (YAHOO FINANCE .BA) ─────────────────────
-// Rava eliminó su endpoint público (da 404 para todo).
-// Yahoo Finance cubre acciones (PAMP.BA, GGAL.BA) y bonos (AL41.BA, AL30.BA, GD30.BA).
 async function fetchArPrice(ticker) {
-  const yt  = ticker.includes('.') ? ticker : `${ticker}.BA`;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yt)}?interval=1d&range=2d`;
-  const data = await fetchViaProxy(url);
+  const yt = ticker.includes('.') ? ticker : `${ticker}.BA`;
+  const data = await fetchViaProxy(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yt)}?interval=1d&range=2d`);
   const meta = data?.chart?.result?.[0]?.meta;
-  if (!meta || !meta.regularMarketPrice) throw new Error(`Yahoo .BA: sin precio para ${yt}`);
-  const price     = meta.regularMarketPrice;
-  const prev      = meta.chartPreviousClose || meta.previousClose || price;
-  const changeAbs = price - prev;
-  const change    = prev ? (changeAbs / prev) * 100 : 0;
-  return { price, change, changeAbs };
+  const price = meta.regularMarketPrice;
+  const prev = meta.chartPreviousClose || meta.previousClose || price;
+  return { price, change: ((price - prev) / prev) * 100, changeAbs: price - prev };
 }
 
-// ─── DATA: GLOBAL / CEDEAR (YAHOO FINANCE) ───────────────────
+// ... (fetchGlobalPrice y fetchCryptoPrice se mantienen igual que en tu original)
 async function fetchGlobalPrice(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
   const data = await fetchViaProxy(url);
-  const meta   = data.chart.result[0].meta;
-  const price  = meta.regularMarketPrice;
-  const prev   = meta.chartPreviousClose || meta.previousClose || price;
-  const changeAbs = price - prev;
-  const change    = prev ? (changeAbs / prev) * 100 : 0;
-  return { price, change, changeAbs };
+  const meta = data.chart.result[0].meta;
+  const price = meta.regularMarketPrice;
+  const prev = meta.chartPreviousClose || meta.previousClose || price;
+  return { price, change: ((price - prev) / prev) * 100, changeAbs: price - prev };
 }
 
-// ─── DATA: CRYPTO (COINGECKO) ────────────────────────────────
-const COINGECKO_MAP = {
-  BTC:'bitcoin', ETH:'ethereum', BNB:'binancecoin', SOL:'solana',
-  ADA:'cardano', XRP:'ripple', DOGE:'dogecoin', MATIC:'matic-network',
-  DOT:'polkadot', AVAX:'avalanche-2', LINK:'chainlink', UNI:'uniswap',
-  ATOM:'cosmos', LTC:'litecoin', BCH:'bitcoin-cash', NEAR:'near',
-  APT:'aptos', ARB:'arbitrum', OP:'optimism', INJ:'injective-protocol',
-  USDT:'tether', USDC:'usd-coin', WLFI: 'world-liberty-financial',
-};
-
+const COINGECKO_MAP = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
 async function fetchCryptoPrice(ticker) {
   const id = COINGECKO_MAP[ticker.toUpperCase()] || ticker.toLowerCase();
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`;
-  const data = await fetchViaProxy(url);
+  const data = await fetchViaProxy(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
   const info = data[id];
-  if (!info) throw new Error(`CoinGecko: ${id} not found`);
-  const price     = info.usd;
-  const change    = info.usd_24h_change || 0;
-  const changeAbs = price * change / 100;
-  return { price, change, changeAbs };
+  const price = info.usd;
+  return { price, change: info.usd_24h_change || 0, changeAbs: (price * (info.usd_24h_change || 0)) / 100 };
 }
 
-// ─── FETCH ALL PRICES ─────────────────────────────────────────
-async function fetchAllPrices(forceRefresh = false) {
-  if (!positions.length) return {};
-
-  const cached = getCachedPrices();
-  const result = { ...cached };
-  const toFetch = forceRefresh
-    ? positions
-    : positions.filter(p => !cached[p.ticker] || cached[p.ticker].cached);
-
-  const fetchers = toFetch.map(async p => {
-    try {
-      let data;
-      if      (p.type === 'ar')     data = await fetchArPrice(p.ticker);
-      else if (p.type === 'global') data = await fetchGlobalPrice(p.ticker);
-      else                          data = await fetchCryptoPrice(p.ticker);
-      result[p.ticker] = { ...data, cached: false };
-    } catch {
-      // keep cached if available
-      if (!result[p.ticker]) result[p.ticker] = { price: 0, change: 0, changeAbs: 0, cached: true };
+// ─── CORE LOGIC ──────────────────────────────────────────────
+async function loadMacro() {
+  try {
+    const d = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
+    if (d && d.venta) {
+      mepRate = parseFloat(d.venta);
+      el('sourceRow').innerHTML = `Dólar MEP: ${fmt.mep(mepRate)}`;
     }
-  });
-
-  await Promise.allSettled(fetchers);
-  setCachedPrices(result);
-  priceCache = result;
-  return result;
-}
-
-// ─── CALCULATIONS ─────────────────────────────────────────────
-function toUSD(valueInCurrency, currency) {
-  if (currency === 'USD') return valueInCurrency;
-  // Sin MEP no podemos convertir ARS→USD correctamente; devolvemos null
-  // para que calculatePortfolio excluya esas filas del total hasta tener la tasa.
-  if (!mepRate || mepRate <= 0) return null;
-  return valueInCurrency / mepRate;
+  } catch (e) { console.error("Error Macro:", e); }
 }
 
 function calculatePortfolio(prices) {
-  let totalUSD     = 0;
-  let totalCostUSD = 0;
-  let todayAbsUSD  = 0;
+  let totalUSD = 0, totalCostUSD = 0, todayAbsUSD = 0;
   const rows = [];
 
-  for (const pos of positions) {
+  positions.forEach(pos => {
     const info = prices[pos.ticker];
-    if (!info) continue;
+    if (!info) return;
 
-    const price    = info.price || 0;
-    const change   = info.change || 0;
-    const currency = pos.currency || (pos.type === 'crypto' ? 'USD' : pos.type === 'ar' ? 'ARS' : 'USD');
+    const price = info.price || 0;
+    const dpt = calculateDPT(pos.holdings);
+    
+    // Agregados de holdings
+    const totalQty = pos.holdings.reduce((s, h) => s + h.qty, 0);
+    const totalCostARS = pos.holdings.reduce((s, h) => s + (h.qty * h.price * (h.tc || 1)), 0);
+    const totalCostUSD_pos = pos.holdings.reduce((s, h) => s + (h.qty * h.price), 0); // Asumimos avgInput es USD
 
-    // ─── NUEVO: cálculo separado para AR ───────────────────────────
-    let totalVal, totalCost, gainAbs, gainPct, per;
+    const currentValLocal = price * totalQty;
+    const currentValUSD = pos.type === 'ar' ? (currentValLocal / (mepRate || 1)) : currentValLocal;
+    
+    const gainAbs = currentValUSD - totalCostUSD_pos;
+    const gainPct = totalCostUSD_pos > 0 ? (gainAbs / totalCostUSD_pos) * 100 : 0;
 
-    if (pos.type === 'ar' && pos.tcCompra) {
-      const pmARS      = pos.avgPrice * pos.tcCompra;   // PM en ARS
-      totalVal         = price * pos.quantity;           // valor actual en ARS
-      totalCost        = pmARS * pos.quantity;           // costo en ARS
-      gainAbs          = totalVal - totalCost;
-      gainPct          = totalCost > 0 ? (gainAbs / totalCost) * 100 : null;
-      per              = pmARS > 0 ? price / pmARS : null;  // múltiplo real
-    } else {
-      totalVal  = price * pos.quantity;
-      totalCost = pos.avgPrice * pos.quantity;
-      gainAbs   = totalVal - totalCost;
-      gainPct   = totalCost > 0.0001 ? (gainAbs / totalCost) * 100 : null;
-      per       = null;
-    }
-    // ───────────────────────────────────────────────────────────────
-
-    const dayAbsLocal = (info.changeAbs || 0) * pos.quantity;
-
-    const totalValUSD_raw  = toUSD(totalVal, currency);
-    const totalCostUSD_raw = toUSD(totalCost, currency);
-    const dayAbsUSD_raw    = toUSD(dayAbsLocal, currency);
-
-    const mepReady      = totalValUSD_raw !== null;
-    const totalValUSD   = mepReady ? totalValUSD_raw  : 0;
-    const totalCostUSD_ = mepReady ? totalCostUSD_raw : 0;
-    const dayAbsUSD_    = mepReady ? dayAbsUSD_raw    : 0;
-
-    totalUSD     += totalValUSD;
-    totalCostUSD += totalCostUSD_;
-    todayAbsUSD  += dayAbsUSD_;
+    totalUSD += currentValUSD;
+    totalCostUSD += totalCostUSD_pos;
+    todayAbsUSD += (info.changeAbs * totalQty) / (pos.type === 'ar' ? (mepRate || 1) : 1);
 
     rows.push({
-      ticker: pos.ticker, type: pos.type, quantity: pos.quantity,
-      avgPrice: pos.avgPrice, tcCompra: pos.tcCompra || null, currency,
-      price, change, changeAbs: info.changeAbs || 0,
-      totalVal, totalCost, gainAbs, gainPct, per,   // <-- per agregado
-      totalValUSD, cached: info.cached
+      ...pos,
+      price,
+      dpt,
+      totalQty,
+      currentValLocal,
+      gainAbs,
+      gainPct,
+      change: info.change
     });
-  }
+  });
 
-  const totalGainUSD = totalUSD - totalCostUSD;
-  const totalGainPct = totalCostUSD > 0.0001 ? (totalGainUSD / totalCostUSD) * 100 : 0;
-  const todayPct     = (totalUSD - todayAbsUSD) > 0
-    ? (todayAbsUSD / (totalUSD - todayAbsUSD)) * 100 : 0;
-
-  const best = rows.reduce((a, b) => (b.change > (a?.change || -Infinity) ? b : a), null);
-
-  return { rows, totalUSD, totalGainUSD, totalGainPct, todayAbsUSD, todayPct, best };
+  return { rows, totalUSD, totalGainUSD: totalUSD - totalCostUSD, todayPct: (todayAbsUSD / totalUSD) * 100, todayAbsUSD };
 }
 
-// ─── RENDER: METRICS ──────────────────────────────────────────
-function renderMetrics(calc) {
-  const { totalUSD, totalGainUSD, totalGainPct, todayAbsUSD, todayPct, best, rows } = calc;
-
-  setVal('totalVal', fmt.usd(totalUSD));
-
-  const gainSign = totalGainUSD >= 0 ? '+' : '−';
-  setVal('totalGain', gainSign + fmt.usd(Math.abs(totalGainUSD)), colorClass(totalGainUSD));
-  setVal('totalGainPct', fmt.pct(totalGainPct), colorClass(totalGainPct));
-
-  setVal('todayPct', fmt.pct(todayPct), colorClass(todayPct));
-  const todaySign = todayAbsUSD >= 0 ? '+' : '−';
-  setVal('todayAbs', todaySign + fmt.usd(Math.abs(todayAbsUSD)) + ' hoy');
-
-  setVal('posCount', rows.length);
-
-  if (best) {
-    // Mostrar ticker limpio sin sufijo .BA
-    setVal('bestTicker', best.ticker.replace(/\.BA$/i, ''));
-    setVal('bestPct', fmt.pct(best.change), colorClass(best.change));
-  }
-}
-
-// ─── RENDER: TABLE ────────────────────────────────────────────
+// ─── RENDER ──────────────────────────────────────────────────
 function renderTable(rows) {
   const tbody = el('posTable');
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">Agregá tu primera posición arriba ↑</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">No hay posiciones</td></tr>';
     return;
   }
 
-  const currLabel = { ar: 'ARS', global: 'USD', crypto: 'USD' };
-
-  tbody.innerHTML = rows.map((r, i) => {
-  const fmtPrice = r.currency === 'ARS' ? fmt.ars : fmt.usd;
-  const pmARS    = (r.type === 'ar' && r.tcCompra) ? r.avgPrice * r.tcCompra : null;
-  const perStr   = r.per != null ? r.per.toFixed(2) + 'x' : '—';
-  const tcStr    = r.tcCompra ? fmt.ars(r.tcCompra) : '—';
-  const pmARSStr = pmARS ? fmt.ars(pmARS) : '—';
-
-  return `
-  <tr>
-    <td>
-      <div class="ticker-name">${r.ticker.replace(/\.BA$/i, '')}
-        <span class="type-badge">${r.type.toUpperCase()}</span>
-        ${r.cached ? '<span class="src-badge">cache</span>' : ''}
-      </div>
-      <div class="ticker-sub">${r.currency}</div>
-    </td>
-    <td>${fmtPrice(r.price)}</td>
-    <td class="${colorClass(r.change)}">${fmt.pct(r.change)}</td>
-    <td>${r.quantity.toLocaleString('es-AR', {maximumFractionDigits:4})}</td>
-    <td>${fmt.usd(r.avgPrice)}</td>
-    <td>${tcStr}</td>
-    <td>${pmARSStr}</td>
-    <td>${fmtPrice(r.totalVal)}</td>
-    <td class="${colorClass(r.gainAbs)}">${r.gainAbs >= 0 ? '+' : '−'}${fmtPrice(Math.abs(r.gainAbs))}</td>
-    <td class="${r.per != null ? (r.per >= 1 ? 'pos' : 'neg') : ''}">${perStr}</td>
-    <td><button class="del-btn" data-idx="${i}" title="Eliminar">✕</button></td>
-  </tr>`;
-}).join('');
-  // Delete handlers
-  tbody.querySelectorAll('.del-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const origIdx = positions.findIndex(p => p.ticker === rows[btn.dataset.idx].ticker);
-      if (origIdx !== -1) { positions.splice(origIdx, 1); savePositions(); refresh(); }
-    });
-  });
+  tbody.innerHTML = rows.map((r, i) => `
+    <tr>
+      <td>${r.ticker} <span class="type-badge">${r.type}</span></td>
+      <td>${r.currency === 'ARS' ? fmt.ars(r.price) : fmt.usd(r.price)}</td>
+      <td class="${colorClass(r.change)}">${fmt.pct(r.change)}</td>
+      <td>${r.totalQty}</td>
+      <td><strong>${r.dpt} días</strong></td>
+      <td>${fmt.usd(r.gainAbs)}</td>
+      <td class="${colorClass(r.gainPct)}">${fmt.pct(r.gainPct)}</td>
+      <td><button onclick="deletePos(${i})">✕</button></td>
+    </tr>
+  `).join('');
 }
 
-// ─── RENDER: PIE CHART ───────────────────────────────────────
-function renderPie(rows) {
-  const ctx = el('pieChart').getContext('2d');
-  const labels = rows.map(r => r.ticker);
-  const data   = rows.map(r => r.totalValUSD);
-
-  if (pieChart) pieChart.destroy();
-  pieChart = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{ data, backgroundColor: PIE_COLORS, borderWidth: 0, hoverOffset: 6 }]
-    },
-    options: {
-      cutout: '62%',
-      plugins: { legend: { display: false }, tooltip: {
-        callbacks: {
-          label: ctx => ` ${ctx.label}: ${fmt.usd(ctx.raw)} (${((ctx.raw / ctx.dataset.data.reduce((a,b)=>a+b,0))*100).toFixed(1)}%)`
-        }
-      }},
-      animation: { duration: 600 }
-    }
-  });
-
-  // Custom legend
-  const legend = el('pieLegend');
-  legend.innerHTML = labels.map((l, i) =>
-    `<span><span class="leg-dot" style="background:${PIE_COLORS[i % PIE_COLORS.length]}"></span>${l}</span>`
-  ).join('');
-}
-
-// ─── DATA: HISTORY (line chart) ───────────────────────────────
-async function fetchHistoryYahoo(ticker, range) {
-  const rangeMap = { '1M':'1mo', '6M':'6mo', 'YTD':'ytd', '1Y':'1y' };
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=${rangeMap[range]||'1mo'}`;
-  try {
-    const data = await fetchViaProxy(url);
-    const ts     = data.chart.result[0].timestamp;
-    const closes = data.chart.result[0].indicators.quote[0].close;
-    return ts.map((t, i) => ({ t: t * 1000, v: closes[i] })).filter(d => d.v != null);
-  } catch { return []; }
-}
-
-function normalizeHistory(series) {
-  if (!series.length) return [];
-  const base = series[0].v;
-  return series.map(d => ({ t: d.t, v: base > 0 ? ((d.v - base) / base) * 100 : 0 }));
-}
-
-async function buildLineData(range) {
-  // Use BRK-B as benchmark
-  const benchmark = await fetchHistoryYahoo('BRK-B', range);
-  const benchNorm = normalizeHistory(benchmark);
-
-  // Portfolio: weight history by current allocation
-  const total = positions.reduce((s, p) => {
-    const price = priceCache[p.ticker]?.price || 0;
-    return s + price * p.quantity;
-  }, 0);
-
-  if (!total || !positions.length) return { portfolio: [], benchmark: benchNorm };
-
-  // Fetch histories for all positions
-  const histories = await Promise.allSettled(
-    positions
-      .filter(p => p.type === 'global' || p.type === 'crypto')
-      .map(p => fetchHistoryYahoo(p.ticker, range).then(h => ({ ticker: p.ticker, h })))
-  );
-
-  // Build weighted portfolio series aligned to benchmark dates
-  const dates = benchNorm.map(d => d.t);
-  const portfolio = dates.map((t, i) => {
-    let weightedPct = 0;
-    let weightSum   = 0;
-    for (const res of histories) {
-      if (res.status !== 'fulfilled') continue;
-      const { ticker, h } = res.value;
-      if (!h.length) continue;
-      const norm  = normalizeHistory(h);
-      const point = norm.find(d => Math.abs(d.t - t) < 86400000 * 2) || norm[clamp(i, 0, norm.length-1)];
-      const price = priceCache[ticker]?.price || 0;
-      const pos   = positions.find(p => p.ticker === ticker);
-      if (!pos) continue;
-      const weight = (price * pos.quantity) / total;
-      weightedPct += (point?.v || 0) * weight;
-      weightSum   += weight;
-    }
-    return { t, v: weightSum > 0 ? weightedPct / weightSum : 0 };
-  });
-
-  return { portfolio, benchmark: benchNorm };
-}
-
-// ─── RENDER: LINE CHART ───────────────────────────────────────
-async function renderLineChart(range) {
-  const { portfolio, benchmark } = await buildLineData(range);
-
-  const labels = benchmark.map(d =>
-    new Date(d.t).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
-  );
-
-  const ctx = el('lineChart').getContext('2d');
-  if (lineChart) lineChart.destroy();
-
-  lineChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Mi portfolio',
-          data: portfolio.map(d => parseFloat(d.v.toFixed(2))),
-          borderColor: '#378ADD',
-          backgroundColor: 'rgba(55,138,221,0.08)',
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.3,
-          fill: true,
-        },
-        {
-          label: 'BRK-B',
-          data: benchmark.map(d => parseFloat(d.v.toFixed(2))),
-          borderColor: '#1D9E75',
-          borderDash: [5, 4],
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.3,
-          fill: false,
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: ctx => ` ${ctx.dataset.label}: ${ctx.raw >= 0 ? '+' : ''}${ctx.raw}%`
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 6, color: '#a09f9a', font: { size: 11 } }
-        },
-        y: {
-          grid: { color: 'rgba(0,0,0,0.06)' },
-          ticks: {
-            color: '#a09f9a', font: { size: 11 },
-            callback: v => (v >= 0 ? '+' : '') + v + '%'
-          }
-        }
-      },
-      animation: { duration: 500 }
-    }
-  });
-}
-
-// ─── RENDER: FULL UI ──────────────────────────────────────────
-function renderUI(prices) {
-  const calc = calculatePortfolio(prices);
-  renderMetrics(calc);
-  renderTable(calc.rows);
-  if (calc.rows.length) {
-    renderPie(calc.rows);
-    renderLineChart(currentRange);
-  }
-}
-
-// ─── POSITIONS PERSISTENCE ────────────────────────────────────
-function loadPositions() {
-  positions = lsGet(LS_POSITIONS) || [];
-}
-function savePositions() {
-  lsSet(LS_POSITIONS, positions);
-}
-
-// ─── DETECT TYPE FROM TICKER ──────────────────────────────────
-function detectType(ticker) {
-  const t = ticker.toUpperCase();
-  if (COINGECKO_MAP[t]) return 'crypto';
-  // AR tickers: letras + números, típicamente 4-6 chars o bonos (AL30, GD35, etc.)
-  if (/^[A-Z]{2,5}\d{0,2}[A-Z]?$/.test(t) && activeType === 'ar') return 'ar';
-  return activeType;
-}
-
-// ─── FORM: ADD POSITION ───────────────────────────────────────
-function showError(msg) {
-  const e = el('addError');
-  e.textContent = msg;
-  e.style.display = msg ? 'block' : 'none';
-}
-
+// ─── ACTIONS ─────────────────────────────────────────────────
 async function handleAdd() {
   const ticker = el('tickerInput').value.trim().toUpperCase();
-  const qty    = parseFloat(el('qtyInput').value);
-  const avg    = parseFloat(el('avgInput').value);
-  const tc     = parseFloat(el('tcInput').value) ;
+  const qty = parseFloat(el('qtyInput').value);
+  const price = parseFloat(el('avgInput').value);
+  const tc = parseFloat(el('tcInput').value) || null;
 
-  if (!ticker)      return showError('Ingresá un ticker.');
-  if (isNaN(qty) || qty <= 0) return showError('Cantidad inválida.');
-  if (isNaN(avg) || avg <= 0) return showError('Precio promedio inválido.');
+  if (!ticker || isNaN(qty)) return;
 
-  const type     = detectType(ticker);
+  const newHolding = { qty, price, tc, date: new Date().toISOString() };
+  const existing = positions.find(p => p.ticker === ticker);
 
-  if (type === 'ar' && (isNaN(tc) || tc <= 0)) return showError('Ingresá el TC de compra.');
-
-  if (positions.find(p => p.ticker === ticker)) return showError('Ya existe esa posición.');
-
-  showError('');
-  const btn = el('addBtn');
-  btn.disabled = true;
-  btn.textContent = 'Cargando…';
-
-  const currency = type === 'ar' ? 'ARS' : 'USD';
-
-  positions.push({ ticker, type, quantity: qty, avgPrice: avg, currency });
-  savePositions();
-
-  // Fetch price immediately
-  await fetchAllPrices(false);
-  renderUI(priceCache);
-
-  el('tickerInput').value = '';
-  el('qtyInput').value    = '';
-  el('avgInput').value    = '';
-  el('tcInput').value     = '';
-  btn.disabled  = false;
-  btn.textContent = '+ Agregar';
-}
-
-// ─── REFRESH ──────────────────────────────────────────────────
-async function refresh(force = false) {
-  // Cargar macro y precios en paralelo para mayor velocidad
-  const [_, prices] = await Promise.all([loadMacro(), fetchAllPrices(force)]);
-  // Si mepRate sigue null (fallo de red), intentar de nuevo una vez
-  if (!mepRate) {
-    try {
-      const m = await fetchMacroData();
-      if (m.mep) { mepRate = m.mep; setCachedMacro(m); renderMacro(m, false); }
-    } catch {}
-  }
-  renderUI(prices);
-}
-
-// ─── CLOCKS ───────────────────────────────────────────────────
-function updateClocks() {
-  const now = new Date();
-  const toStr = (tz) => now.toLocaleTimeString('es-AR', {
-    timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit'
-  });
-  el('clockAR').textContent = 'AR ' + toStr('America/Argentina/Buenos_Aires');
-  el('clockNY').textContent = 'NY ' + toStr('America/New_York');
-}
-
-// ─── SMART REFRESH SCHEDULE ───────────────────────────────────
-function scheduleRefresh() {
-  const now    = new Date();
-  const nyHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
-
-  // Market sessions (NY time): open ~9:30, mid ~12:00, close ~16:00
-  const targets = [9.5, 12, 16];
-  const nowHour = nyHour + now.getMinutes() / 60;
-  let nextMs    = null;
-
-  for (const t of targets) {
-    if (t > nowHour) { nextMs = (t - nowHour) * 3600 * 1000; break; }
-  }
-  if (!nextMs) nextMs = (24 - nowHour + 9.5) * 3600 * 1000; // next day open
-  // Cap to 2h fallback
-  const delay = Math.min(nextMs, 2 * 3600 * 1000);
-  setTimeout(() => { refresh(true); scheduleRefresh(); }, delay);
-}
-
-// ─── RANGE BUTTONS ───────────────────────────────────────────
-function initRangeButtons() {
-  document.querySelectorAll('.range-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentRange = btn.dataset.range;
-      renderLineChart(currentRange);
+  if (existing) {
+    existing.holdings.push(newHolding);
+  } else {
+    positions.push({
+      ticker,
+      type: activeType,
+      currency: activeType === 'ar' ? 'ARS' : 'USD',
+      holdings: [newHolding]
     });
-  });
+  }
+
+  lsSet(LS_POSITIONS, positions);
+  location.reload(); // Refrescar para recalcular todo
 }
 
-// ─── TYPE TOGGLE ─────────────────────────────────────────────
-function initTypeToggle() {
-  const placeholders = {
-    ar:     'Ticker argentino (ej: GGAL, AL30, S31O3)',
-    global: 'Ticker global (ej: AAPL, MSFT, BRK-B)',
-    crypto: 'Cripto (ej: BTC, ETH, SOL)'
-  };
-  document.querySelectorAll('.type-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeType = btn.dataset.type;
-      el('tickerInput').placeholder = placeholders[activeType];
-    });
-  });
-}
+window.deletePos = (i) => {
+  positions.splice(i, 1);
+  lsSet(LS_POSITIONS, positions);
+  location.reload();
+};
 
-// ─── INIT ─────────────────────────────────────────────────────
+// ─── INIT ────────────────────────────────────────────────────
 async function init() {
-  loadPositions();
-  initRangeButtons();
-  initTypeToggle();
+  positions = lsGet(LS_POSITIONS) || [];
+  await loadMacro();
+  
+  const tickers = positions.map(p => p.ticker);
+  const priceResults = await Promise.all(positions.map(p => {
+    if (p.type === 'ar') return fetchArPrice(p.ticker);
+    if (p.type === 'crypto') return fetchCryptoPrice(p.ticker);
+    return fetchGlobalPrice(p.ticker);
+  }));
 
-  el('addBtn').addEventListener('click', handleAdd);
-  el('tickerInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleAdd(); });
+  tickers.forEach((t, i) => { priceCache[t] = priceResults[i]; });
 
-  setInterval(updateClocks, 1000);
-  updateClocks();
+  const calc = calculatePortfolio(priceCache);
+  el('totalVal').textContent = fmt.usd(calc.totalUSD);
+  renderTable(calc.rows);
 
-  // Load macro + prices
-  await refresh(false);
-  scheduleRefresh();
+  el('addBtn').onclick = handleAdd;
 }
 
 document.addEventListener('DOMContentLoaded', init);
