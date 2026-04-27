@@ -1,244 +1,173 @@
-/* ============================================================
-   PORTFOLIO DASHBOARD — script.js
-   Fuentes: Rava (AR), Yahoo Finance (Global), CoinGecko (Crypto)
-   Optimizado para: DPT (Días de Tenencia) y G/P por Lotes
-   ============================================================ */
-
 'use strict';
 
-// ─── CONSTANTS ───────────────────────────────────────────────
+// ─── CONSTANTES Y ESTADO ─────────────────────────────────────
 const PROXY = '/api/proxy';
 const LS_POSITIONS = 'portfolio_positions_v2';
-const LS_PRICES    = 'portfolio_prices_v2';
-const LS_MACRO     = 'macroData_v2';
-const CACHE_TTL    = 15 * 60 * 1000;
-
-// ─── STATE ───────────────────────────────────────────────────
-let positions  = [];   // Estructura: [{ticker, type, currency, holdings: [{qty, price, date, tc}] }]
+let positions = []; 
 let priceCache = {};
-let mepRate    = null;
+let mepRate = null;
 let activeType = 'ar';
 
-// ─── UTILS ───────────────────────────────────────────────────
 const el = (id) => document.getElementById(id);
-const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
+const lsGet = (key) => JSON.parse(localStorage.getItem(key));
+const lsSet = (key, val) => localStorage.setItem(key, JSON.stringify(val));
 
 const fmt = {
-  usd: v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
-  ars: v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
-  pct: v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%',
-  mep: v => '$ ' + Math.round(v).toLocaleString('es-AR'),
+    usd: v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
+    ars: v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
+    pct: v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + '%',
 };
 
-/**
- * Calcula Días Promedio de Tenencia (DPT) ponderados por cantidad.
- */
+const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
+
+// ─── UTILS DE CÁLCULO ────────────────────────────────────────
 function calculateDPT(holdings) {
-  if (!holdings || holdings.length === 0) return 0;
-  const now = new Date();
-  let totalQty = 0;
-  let weightedDays = 0;
-
-  holdings.forEach(h => {
-    const diffTime = Math.abs(now - new Date(h.date));
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    weightedDays += (diffDays * h.qty);
-    totalQty += h.qty;
-  });
-
-  return totalQty > 0 ? Math.round(weightedDays / totalQty) : 0;
+    if (!holdings || holdings.length === 0) return 0;
+    const now = new Date();
+    let totalQty = 0;
+    let weightedDays = 0;
+    holdings.forEach(h => {
+        const diffTime = Math.abs(now - new Date(h.date));
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        weightedDays += (diffDays * h.qty);
+        totalQty += h.qty;
+    });
+    return totalQty > 0 ? Math.round(weightedDays / totalQty) : 0;
 }
 
-// ─── LOCAL STORAGE ───────────────────────────────────────────
-function lsGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
-function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
-
-// ─── DATA FETCHING ───────────────────────────────────────────
+// ─── FETCHING ────────────────────────────────────────────────
 async function fetchViaProxy(url) {
-  const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
+    const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
+    return await res.json();
 }
 
-async function fetchArPrice(ticker) {
-  const yt = ticker.includes('.') ? ticker : `${ticker}.BA`;
-  const data = await fetchViaProxy(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yt)}?interval=1d&range=2d`);
-  const meta = data?.chart?.result?.[0]?.meta;
-  const price = meta.regularMarketPrice;
-  const prev = meta.chartPreviousClose || meta.previousClose || price;
-  return { price, change: ((price - prev) / prev) * 100, changeAbs: price - prev };
+async function getPrice(ticker, type) {
+    try {
+        let url;
+        if (type === 'crypto') {
+            const map = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
+            const id = map[ticker] || ticker.toLowerCase();
+            const data = await fetchViaProxy(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
+            return { price: data[id].usd, change: data[id].usd_24h_change };
+        } else {
+            const symbol = type === 'ar' ? (ticker.includes('.') ? ticker : `${ticker}.BA`) : ticker;
+            const data = await fetchViaProxy(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`);
+            const meta = data.chart.result[0].meta;
+            return { price: meta.regularMarketPrice, change: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100 };
+        }
+    } catch (e) { return { price: 0, change: 0 }; }
 }
 
-async function fetchGlobalPrice(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
-  const data = await fetchViaProxy(url);
-  const meta = data.chart.result[0].meta;
-  const price = meta.regularMarketPrice;
-  const prev = meta.chartPreviousClose || meta.previousClose || price;
-  return { price, change: ((price - prev) / prev) * 100, changeAbs: price - prev };
-}
+// ─── CORE ────────────────────────────────────────────────────
+async function init() {
+    positions = lsGet(LS_POSITIONS) || [];
+    
+    // Cargar Dólar MEP
+    const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
+    mepRate = parseFloat(mepData.venta);
+    el('sourceRow').innerText = `Dólar MEP: $${mepRate.toFixed(2)}`;
 
-const COINGECKO_MAP = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
-async function fetchCryptoPrice(ticker) {
-  const id = COINGECKO_MAP[ticker.toUpperCase()] || ticker.toLowerCase();
-  const data = await fetchViaProxy(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
-  const info = data[id];
-  const price = info.usd;
-  return { price, change: info.usd_24h_change || 0, changeAbs: (price * (info.usd_24h_change || 0)) / 100 };
-}
-
-// ─── CORE LOGIC ──────────────────────────────────────────────
-async function loadMacro() {
-  try {
-    const d = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
-    if (d && d.venta) {
-      mepRate = parseFloat(d.venta);
-      el('sourceRow').innerHTML = `Dólar MEP: ${fmt.mep(mepRate)}`;
+    // Cargar Precios
+    if (positions.length > 0) {
+        const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
+        positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
     }
-  } catch (e) { console.error("Error Macro:", e); }
+
+    renderAll();
 }
 
-function calculatePortfolio(prices) {
-  let totalUSD = 0;
-  const rows = [];
-
-  positions.forEach(pos => {
-    const info = prices[pos.ticker];
-    if (!info) return;
-
-    const currentPrice = info.price || 0;
-    const totalQty = pos.holdings.reduce((s, h) => s + h.qty, 0);
+function renderAll() {
+    let totalPortfolioUSD = 0;
+    const tbody = el('posTable');
     
-    // Precio Promedio de Compra (PPC) en moneda original
-    const avgPurchasePrice = pos.holdings.reduce((s, h) => s + (h.qty * h.price), 0) / totalQty;
-    
-    // Valor total de la posición
-    const currentValLocal = currentPrice * totalQty;
-    const currentValUSD = pos.type === 'ar' ? (currentValLocal / (mepRate || 1)) : currentValLocal;
-    
-    // Costo total en USD para P&L
-    const totalCostUSD = pos.holdings.reduce((s, h) => {
-        // Si es ARS, convertimos el costo histórico usando el TC de ese momento
-        const costUSD = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) * h.qty : h.price * h.qty;
-        return s + costUSD;
-    }, 0);
-
-    const gainAbs = currentValUSD - totalCostUSD;
-    const dpt = calculateDPT(pos.holdings);
-
-    totalUSD += currentValUSD;
-
-    rows.push({
-      ticker: pos.ticker,
-      type: pos.type,
-      currency: pos.currency,
-      price: currentPrice,
-      change: info.change,
-      totalQty: totalQty,
-      avgPurchasePrice: avgPurchasePrice,
-      currentValUSD: currentValUSD,
-      gainAbs: gainAbs,
-      dpt: dpt
+    // Calcular Valor Total primero para el % de cartera
+    const processed = positions.map(pos => {
+        const info = priceCache[pos.ticker] || { price: 0, change: 0 };
+        const qty = pos.holdings.reduce((s, h) => s + h.qty, 0);
+        const valUSD = pos.type === 'ar' ? (info.price * qty / mepRate) : (info.price * qty);
+        totalPortfolioUSD += valUSD;
+        return { pos, info, qty, valUSD };
     });
-  });
 
-  return { rows, totalUSD };
+    el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
+
+    if (processed.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-row">No hay posiciones</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = processed.map((item, i) => {
+        const { pos, info, qty, valUSD } = item;
+        const ppc = pos.holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
+        const tenencia = calculateDPT(pos.holdings);
+        const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
+        
+        // P&L en USD
+        const totalCostUSD = pos.holdings.reduce((s, h) => {
+            const cost = pos.type === 'ar' ? (h.price / (h.tc || mepRate)) : h.price;
+            return s + (cost * h.qty);
+        }, 0);
+        const pnl = valUSD - totalCostUSD;
+        const per = totalCostUSD > 0 ? (pnl / totalCostUSD) * 100 : 0;
+
+        return `
+            <tr>
+                <td><strong>${pos.ticker}</strong></td>
+                <td>${pos.type === 'ar' ? fmt.ars(info.price) : fmt.usd(info.price)}</td>
+                <td class="${colorClass(info.change)}">${fmt.pct(info.change)}</td>
+                <td>${qty.toFixed(2)}</td>
+                <td>${pos.type === 'ar' ? fmt.ars(ppc) : fmt.usd(ppc)}</td>
+                <td>${tenencia} días</td>
+                <td>${weight.toFixed(1)}%</td>
+                <td class="${colorClass(pnl)}">${fmt.usd(pnl)}</td>
+                <td class="${colorClass(per)}">${fmt.pct(per)}</td>
+                <td><button class="del-btn" onclick="deletePos(${i})">✕</button></td>
+            </tr>
+        `;
+    }).join('');
 }
 
-// ─── RENDER ──────────────────────────────────────────────────
-function renderTable(rows) {
-  const tbody = el('posTable');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">Agregá tu primera posición...</td></tr>';
-    return;
-  }
+// ─── EVENTOS ─────────────────────────────────────────────────
+el('addBtn').onclick = async () => {
+    const ticker = el('tickerInput').value.toUpperCase();
+    const qty = parseFloat(el('qtyInput').value);
+    const ppc = parseFloat(el('avgInput').value);
+    const days = parseInt(el('daysInput').value) || 0;
 
-  tbody.innerHTML = rows.map((r, i) => `
-    <tr>
-      <td>${r.ticker} <span class="type-badge">${r.type}</span></td>
-      <td>${r.currency === 'ARS' ? fmt.ars(r.price) : fmt.usd(r.price)}</td>
-      <td class="${colorClass(r.change)}">${fmt.pct(r.change)}</td>
-      <td>${r.totalQty.toFixed(2)}</td>
-      <td>${r.currency === 'ARS' ? fmt.ars(r.avgPurchasePrice) : fmt.usd(r.avgPurchasePrice)}</td>
-      <td>${fmt.usd(r.currentValUSD)}</td>
-      <td class="${colorClass(r.gainAbs)}">${fmt.usd(r.gainAbs)}</td>
-      <td><strong>${r.dpt} días</strong></td>
-      <td><button class="del-btn" onclick="deletePos(${i})">✕</button></td>
-    </tr>
-  `).join('');
-}
+    if (!ticker || isNaN(qty)) return;
 
-// ─── ACTIONS ─────────────────────────────────────────────────
-async function handleAdd() {
-  const ticker = el('tickerInput').value.trim().toUpperCase();
-  const qty = parseFloat(el('qtyInput').value);
-  const price = parseFloat(el('avgInput').value);
-  const tc = parseFloat(el('tcInput').value) || null;
+    const purchaseDate = new Date();
+    purchaseDate.setDate(purchaseDate.getDate() - days);
 
-  if (!ticker || isNaN(qty) || isNaN(price)) return;
+    const holding = { qty, price: ppc, date: purchaseDate.toISOString(), tc: mepRate };
+    const existing = positions.find(p => p.ticker === ticker);
 
-  const newHolding = { 
-    qty, 
-    price, 
-    tc, 
-    date: new Date().toISOString() 
-  };
+    if (existing) {
+        existing.holdings.push(holding);
+    } else {
+        positions.push({
+            ticker, type: activeType,
+            currency: activeType === 'ar' ? 'ARS' : 'USD',
+            holdings: [holding]
+        });
+    }
 
-  const existing = positions.find(p => p.ticker === ticker);
-
-  if (existing) {
-    existing.holdings.push(newHolding);
-  } else {
-    positions.push({
-      ticker,
-      type: activeType,
-      currency: activeType === 'ar' ? 'ARS' : 'USD',
-      holdings: [newHolding]
-    });
-  }
-
-  lsSet(LS_POSITIONS, positions);
-  init(); // Recargar datos sin F5 completo si es posible
-}
+    lsSet(LS_POSITIONS, positions);
+    location.reload(); 
+};
 
 window.deletePos = (i) => {
-  positions.splice(i, 1);
-  lsSet(LS_POSITIONS, positions);
-  init();
+    positions.splice(i, 1);
+    lsSet(LS_POSITIONS, positions);
+    renderAll();
 };
 
-function initTypeToggle() {
-    document.querySelectorAll('.type-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            activeType = btn.dataset.type;
-        });
-    });
-}
-
-// ─── INIT ─────────────────────────────────────────────────────
-async function init() {
-  positions = lsGet(LS_POSITIONS) || [];
-  await loadMacro();
-  
-  if (positions.length > 0) {
-    const priceResults = await Promise.all(positions.map(p => {
-      if (p.type === 'ar') return fetchArPrice(p.ticker);
-      if (p.type === 'crypto') return fetchCryptoPrice(p.ticker);
-      return fetchGlobalPrice(p.ticker);
-    }));
-
-    positions.forEach((p, i) => { priceCache[p.ticker] = priceResults[i]; });
-  }
-
-  const calc = calculatePortfolio(priceCache);
-  el('totalVal').textContent = fmt.usd(calc.totalUSD);
-  renderTable(calc.rows);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    init();
-    initTypeToggle();
-    el('addBtn').onclick = handleAdd;
+document.querySelectorAll('.type-btn').forEach(btn => {
+    btn.onclick = () => {
+        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeType = btn.dataset.type;
+    };
 });
+
+init();

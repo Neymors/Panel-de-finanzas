@@ -91,14 +91,14 @@
       <div class="card-title">Agregar posición</div>
       <div class="type-toggle">
         <button class="type-btn active" data-type="ar">Argentina (Rava)</button>
-        <button class="type-btn" data-type="global">Global (Yahoo)</button>
+        <button class="type-btn" data-type="global">Global</button>
         <button class="type-btn" data-type="crypto">Cripto</button>
       </div>
       <div class="form-row">
-        <input id="tickerInput" placeholder="Ticker argentino (ej: GGAL, AL30)" autocomplete="off" spellcheck="false" />
-        <input id="qtyInput" placeholder="Cantidad" type="number" min="0" step="any" />
-        <input id="avgInput" placeholder="P.M. USD" type="number" min="0" step="any" />
-        <input id="tcInput" placeholder="TC compra (ARS/USD)" type="number" min="0" step="any" />
+        <input id="tickerInput" placeholder="Activo (ej: GGAL)" autocomplete="off" />
+        <input id="qtyInput" placeholder="Cantidad" type="number" />
+        <input id="avgInput" placeholder="Precio Promedio Compra" type="number" />
+        <input id="daysInput" placeholder="Días de tenencia" type="number" />
         <button class="add-btn" id="addBtn">+ Agregar</button>
       </div>
       <div class="error-msg" id="addError"></div>
@@ -114,8 +114,9 @@
               <th>Precio</th>
               <th>% Día</th>
               <th>Cantidad</th>
-              <th>Precio Promedio Compta</th>
-              <th>Total de posicion</th>
+              <th>Precio Promedio Compra</th>
+              <th>Tenencia</th>
+              <th>% En Cartera</th>
               <th>P&L</th>
               <th>PER</th>
               <th></th></tr>
