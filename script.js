@@ -37,13 +37,14 @@ function calculateDPT(holdings) {
 
 // ─── FETCHING ────────────────────────────────────────────────
 async function fetchViaProxy(url) {
-    const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
-    return await res.json();
+    try {
+        const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
+        return await res.json();
+    } catch (e) { return null; }
 }
 
 async function getPrice(ticker, type) {
     try {
-        let url;
         if (type === 'crypto') {
             const map = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
             const id = map[ticker] || ticker.toLowerCase();
@@ -58,29 +59,12 @@ async function getPrice(ticker, type) {
     } catch (e) { return { price: 0, change: 0 }; }
 }
 
-// ─── CORE ────────────────────────────────────────────────────
-async function init() {
-    positions = lsGet(LS_POSITIONS) || [];
-    
-    // Cargar Dólar MEP
-    const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
-    mepRate = parseFloat(mepData.venta);
-    el('sourceRow').innerText = `Dólar MEP: $${mepRate.toFixed(2)}`;
-
-    // Cargar Precios
-    if (positions.length > 0) {
-        const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
-        positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
-    }
-
-    renderAll();
-}
-
+// ─── RENDER ──────────────────────────────────────────────────
 function renderAll() {
     let totalPortfolioUSD = 0;
     const tbody = el('posTable');
     
-    // Calcular Valor Total primero para el % de cartera
+    // 1. Calcular Valor Total
     const processed = positions.map(pos => {
         const info = priceCache[pos.ticker] || { price: 0, change: 0 };
         const qty = pos.holdings.reduce((s, h) => s + h.qty, 0);
@@ -96,13 +80,13 @@ function renderAll() {
         return;
     }
 
+    // 2. Generar Filas
     tbody.innerHTML = processed.map((item, i) => {
         const { pos, info, qty, valUSD } = item;
         const ppc = pos.holdings.reduce((s, h) => s + (h.price * h.qty), 0) / qty;
         const tenencia = calculateDPT(pos.holdings);
         const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
         
-        // P&L en USD
         const totalCostUSD = pos.holdings.reduce((s, h) => {
             const cost = pos.type === 'ar' ? (h.price / (h.tc || mepRate)) : h.price;
             return s + (cost * h.qty);
@@ -127,14 +111,16 @@ function renderAll() {
     }).join('');
 }
 
-// ─── EVENTOS ─────────────────────────────────────────────────
-el('addBtn').onclick = async () => {
-    const ticker = el('tickerInput').value.toUpperCase();
+// ─── ACTIONS ─────────────────────────────────────────────────
+async function handleAdd(e) {
+    if(e) e.preventDefault(); // CRÍTICO: Evita que el botón recargue la página
+
+    const ticker = el('tickerInput').value.trim().toUpperCase();
     const qty = parseFloat(el('qtyInput').value);
     const ppc = parseFloat(el('avgInput').value);
     const days = parseInt(el('daysInput').value) || 0;
 
-    if (!ticker || isNaN(qty)) return;
+    if (!ticker || isNaN(qty) || isNaN(ppc)) return;
 
     const purchaseDate = new Date();
     purchaseDate.setDate(purchaseDate.getDate() - days);
@@ -153,8 +139,18 @@ el('addBtn').onclick = async () => {
     }
 
     lsSet(LS_POSITIONS, positions);
-    location.reload(); 
-};
+    
+    // Limpiar inputs
+    el('tickerInput').value = '';
+    el('qtyInput').value = '';
+    el('avgInput').value = '';
+    el('daysInput').value = '';
+
+    // Actualizar datos sin recargar
+    const newPrice = await getPrice(ticker, activeType);
+    priceCache[ticker] = newPrice;
+    renderAll();
+}
 
 window.deletePos = (i) => {
     positions.splice(i, 1);
@@ -162,12 +158,34 @@ window.deletePos = (i) => {
     renderAll();
 };
 
-document.querySelectorAll('.type-btn').forEach(btn => {
-    btn.onclick = () => {
-        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        activeType = btn.dataset.type;
-    };
-});
+// ─── INIT ─────────────────────────────────────────────────────
+async function init() {
+    positions = lsGet(LS_POSITIONS) || [];
+    
+    // Cargar MEP
+    const mepData = await fetchViaProxy('https://dolarapi.com/v1/dolares/bolsa');
+    if (mepData) mepRate = parseFloat(mepData.venta);
+    if (el('sourceRow')) el('sourceRow').innerText = mepRate ? `Dólar MEP: $${mepRate.toFixed(2)}` : '';
 
-init();
+    // Cargar Precios iniciales
+    if (positions.length > 0) {
+        const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
+        positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
+    }
+
+    renderAll();
+
+    // Event Listeners
+    el('addBtn').onclick = handleAdd;
+    
+    document.querySelectorAll('.type-btn').forEach(btn => {
+        btn.onclick = (e) => {
+            e.preventDefault();
+            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeType = btn.dataset.type;
+        };
+    });
+}
+
+document.addEventListener('DOMContentLoaded', init);
