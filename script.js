@@ -1,6 +1,7 @@
 /* ============================================================
-   PORTFOLIO DASHBOARD — script.js (Refactorizado para DPT)
-   Ecosistema Enképhalos - Amygdalé
+   PORTFOLIO DASHBOARD — script.js
+   Fuentes: Rava (AR), Yahoo Finance (Global), CoinGecko (Crypto)
+   Optimizado para: DPT (Días de Tenencia) y G/P por Lotes
    ============================================================ */
 
 'use strict';
@@ -11,19 +12,17 @@ const LS_POSITIONS = 'portfolio_positions_v2';
 const LS_PRICES    = 'portfolio_prices_v2';
 const LS_MACRO     = 'macroData_v2';
 const CACHE_TTL    = 15 * 60 * 1000;
-const MACRO_TTL    = 24 * 60 * 60 * 1000;
-const PIE_COLORS   = ['#378ADD','#1D9E75','#E8A838','#E05C5C','#8B5CF6','#F472B6','#34D399','#FB923C','#60A5FA','#A78BFA'];
 
 // ─── STATE ───────────────────────────────────────────────────
 let positions  = [];   // Estructura: [{ticker, type, currency, holdings: [{qty, price, date, tc}] }]
 let priceCache = {};
 let mepRate    = null;
-let lineChart  = null;
-let pieChart   = null;
-let currentRange = '1M';
-let activeType   = 'ar';
+let activeType = 'ar';
 
 // ─── UTILS ───────────────────────────────────────────────────
+const el = (id) => document.getElementById(id);
+const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
+
 const fmt = {
   usd: v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
   ars: v => '$' + Math.abs(v).toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}),
@@ -31,11 +30,8 @@ const fmt = {
   mep: v => '$ ' + Math.round(v).toLocaleString('es-AR'),
 };
 
-const el = (id) => document.getElementById(id);
-const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
-
 /**
- * Calcula los Días Promedio de Tenencia (DPT) ponderados por cantidad.
+ * Calcula Días Promedio de Tenencia (DPT) ponderados por cantidad.
  */
 function calculateDPT(holdings) {
   if (!holdings || holdings.length === 0) return 0;
@@ -57,7 +53,7 @@ function calculateDPT(holdings) {
 function lsGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
-// ─── DATA FETCHING (RAVA/YAHOO/COINGECKO) ────────────────────
+// ─── DATA FETCHING ───────────────────────────────────────────
 async function fetchViaProxy(url) {
   const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -73,7 +69,6 @@ async function fetchArPrice(ticker) {
   return { price, change: ((price - prev) / prev) * 100, changeAbs: price - prev };
 }
 
-// ... (fetchGlobalPrice y fetchCryptoPrice se mantienen igual que en tu original)
 async function fetchGlobalPrice(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
   const data = await fetchViaProxy(url);
@@ -104,51 +99,57 @@ async function loadMacro() {
 }
 
 function calculatePortfolio(prices) {
-  let totalUSD = 0, totalCostUSD = 0, todayAbsUSD = 0;
+  let totalUSD = 0;
   const rows = [];
 
   positions.forEach(pos => {
     const info = prices[pos.ticker];
     if (!info) return;
 
-    const price = info.price || 0;
-    const dpt = calculateDPT(pos.holdings);
-    
-    // Agregados de holdings
+    const currentPrice = info.price || 0;
     const totalQty = pos.holdings.reduce((s, h) => s + h.qty, 0);
-    const totalCostARS = pos.holdings.reduce((s, h) => s + (h.qty * h.price * (h.tc || 1)), 0);
-    const totalCostUSD_pos = pos.holdings.reduce((s, h) => s + (h.qty * h.price), 0); // Asumimos avgInput es USD
-
-    const currentValLocal = price * totalQty;
+    
+    // Precio Promedio de Compra (PPC) en moneda original
+    const avgPurchasePrice = pos.holdings.reduce((s, h) => s + (h.qty * h.price), 0) / totalQty;
+    
+    // Valor total de la posición
+    const currentValLocal = currentPrice * totalQty;
     const currentValUSD = pos.type === 'ar' ? (currentValLocal / (mepRate || 1)) : currentValLocal;
     
-    const gainAbs = currentValUSD - totalCostUSD_pos;
-    const gainPct = totalCostUSD_pos > 0 ? (gainAbs / totalCostUSD_pos) * 100 : 0;
+    // Costo total en USD para P&L
+    const totalCostUSD = pos.holdings.reduce((s, h) => {
+        // Si es ARS, convertimos el costo histórico usando el TC de ese momento
+        const costUSD = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) * h.qty : h.price * h.qty;
+        return s + costUSD;
+    }, 0);
+
+    const gainAbs = currentValUSD - totalCostUSD;
+    const dpt = calculateDPT(pos.holdings);
 
     totalUSD += currentValUSD;
-    totalCostUSD += totalCostUSD_pos;
-    todayAbsUSD += (info.changeAbs * totalQty) / (pos.type === 'ar' ? (mepRate || 1) : 1);
 
     rows.push({
-      ...pos,
-      price,
-      dpt,
-      totalQty,
-      currentValLocal,
-      gainAbs,
-      gainPct,
-      change: info.change
+      ticker: pos.ticker,
+      type: pos.type,
+      currency: pos.currency,
+      price: currentPrice,
+      change: info.change,
+      totalQty: totalQty,
+      avgPurchasePrice: avgPurchasePrice,
+      currentValUSD: currentValUSD,
+      gainAbs: gainAbs,
+      dpt: dpt
     });
   });
 
-  return { rows, totalUSD, totalGainUSD: totalUSD - totalCostUSD, todayPct: (todayAbsUSD / totalUSD) * 100, todayAbsUSD };
+  return { rows, totalUSD };
 }
 
 // ─── RENDER ──────────────────────────────────────────────────
 function renderTable(rows) {
   const tbody = el('posTable');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="11">No hay posiciones</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">Agregá tu primera posición...</td></tr>';
     return;
   }
 
@@ -157,11 +158,12 @@ function renderTable(rows) {
       <td>${r.ticker} <span class="type-badge">${r.type}</span></td>
       <td>${r.currency === 'ARS' ? fmt.ars(r.price) : fmt.usd(r.price)}</td>
       <td class="${colorClass(r.change)}">${fmt.pct(r.change)}</td>
-      <td>${r.totalQty}</td>
+      <td>${r.totalQty.toFixed(2)}</td>
+      <td>${r.currency === 'ARS' ? fmt.ars(r.avgPurchasePrice) : fmt.usd(r.avgPurchasePrice)}</td>
+      <td>${fmt.usd(r.currentValUSD)}</td>
+      <td class="${colorClass(r.gainAbs)}">${fmt.usd(r.gainAbs)}</td>
       <td><strong>${r.dpt} días</strong></td>
-      <td>${fmt.usd(r.gainAbs)}</td>
-      <td class="${colorClass(r.gainPct)}">${fmt.pct(r.gainPct)}</td>
-      <td><button onclick="deletePos(${i})">✕</button></td>
+      <td><button class="del-btn" onclick="deletePos(${i})">✕</button></td>
     </tr>
   `).join('');
 }
@@ -173,9 +175,15 @@ async function handleAdd() {
   const price = parseFloat(el('avgInput').value);
   const tc = parseFloat(el('tcInput').value) || null;
 
-  if (!ticker || isNaN(qty)) return;
+  if (!ticker || isNaN(qty) || isNaN(price)) return;
 
-  const newHolding = { qty, price, tc, date: new Date().toISOString() };
+  const newHolding = { 
+    qty, 
+    price, 
+    tc, 
+    date: new Date().toISOString() 
+  };
+
   const existing = positions.find(p => p.ticker === ticker);
 
   if (existing) {
@@ -190,34 +198,47 @@ async function handleAdd() {
   }
 
   lsSet(LS_POSITIONS, positions);
-  location.reload(); // Refrescar para recalcular todo
+  init(); // Recargar datos sin F5 completo si es posible
 }
 
 window.deletePos = (i) => {
   positions.splice(i, 1);
   lsSet(LS_POSITIONS, positions);
-  location.reload();
+  init();
 };
 
-// ─── INIT ────────────────────────────────────────────────────
+function initTypeToggle() {
+    document.querySelectorAll('.type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeType = btn.dataset.type;
+        });
+    });
+}
+
+// ─── INIT ─────────────────────────────────────────────────────
 async function init() {
   positions = lsGet(LS_POSITIONS) || [];
   await loadMacro();
   
-  const tickers = positions.map(p => p.ticker);
-  const priceResults = await Promise.all(positions.map(p => {
-    if (p.type === 'ar') return fetchArPrice(p.ticker);
-    if (p.type === 'crypto') return fetchCryptoPrice(p.ticker);
-    return fetchGlobalPrice(p.ticker);
-  }));
+  if (positions.length > 0) {
+    const priceResults = await Promise.all(positions.map(p => {
+      if (p.type === 'ar') return fetchArPrice(p.ticker);
+      if (p.type === 'crypto') return fetchCryptoPrice(p.ticker);
+      return fetchGlobalPrice(p.ticker);
+    }));
 
-  tickers.forEach((t, i) => { priceCache[t] = priceResults[i]; });
+    positions.forEach((p, i) => { priceCache[p.ticker] = priceResults[i]; });
+  }
 
   const calc = calculatePortfolio(priceCache);
   el('totalVal').textContent = fmt.usd(calc.totalUSD);
   renderTable(calc.rows);
-
-  el('addBtn').onclick = handleAdd;
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    init();
+    initTypeToggle();
+    el('addBtn').onclick = handleAdd;
+});
