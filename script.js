@@ -53,49 +53,6 @@ function updateTopMetrics(processed, totalVal) {
     }
 }
 
-// ─── PIE CHART ────────────────────────────────────────────────
-function renderPieChart(processed, totalPortfolioUSD) {
-    const ctx = el('pieChart');
-    if (!ctx) return;
-
-    const labels = processed.map(item => item.pos.ticker);
-    const data = processed.map(item => (item.valUSD / totalPortfolioUSD) * 100);
-    const colors = [
-        '#185fa5', '#378ADD', '#0f6e56', '#a32d2d',
-        '#f09595', '#7bc99a', '#85b7eb', '#5dcaa5'
-    ];
-
-    if (charts.pie) charts.pie.destroy();
-
-    charts.pie = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: data,
-                backgroundColor: colors.slice(0, labels.length),
-                borderColor: 'var(--surface)',
-                borderWidth: 2,
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false }
-            }
-        }
-    });
-
-    // Renderizar leyenda
-    const legend = el('pieLegend');
-    if (legend) {
-        legend.innerHTML = labels.map((label, i) => 
-            `<span><span class="leg-dot" style="background:${colors[i]};"></span>${label}</span>`
-        ).join('');
-    }
-}
-
 // ─── RENDER ──────────────────────────────────────────────────
 function renderAll() {
     let totalPortfolioUSD = 0;
@@ -141,17 +98,6 @@ function renderAll() {
 
     el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
     updateTopMetrics(processed, totalPortfolioUSD);
-
-    // Renderizar pie chart
-    if (processed.length > 0) {
-        renderPieChart(processed, totalPortfolioUSD);
-    } else {
-        const pieCtx = el('pieChart');
-        if (pieCtx && charts.pie) {
-            charts.pie.destroy();
-            charts.pie = null;
-        }
-    }
 
     if (processed.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" class="empty-row">Agregá tu primera posición arriba ↑</td></tr>';
@@ -258,25 +204,6 @@ async function init() {
     }
     
     renderAll();
-    
-    // Event listeners para botones de tipo
-    document.querySelectorAll('.type-btn').forEach(btn => {
-        btn.onclick = (e) => {
-            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            activeType = e.target.dataset.type;
-        };
-    });
-    
-    // Event listeners para botones de rango
-    document.querySelectorAll('.range-btn').forEach(btn => {
-        btn.onclick = (e) => {
-            document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-        };
-    });
-    
-    // Event listener para agregar posición
     el('addBtn').onclick = handleAdd;
 }
 
