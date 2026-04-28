@@ -20,14 +20,6 @@ const fmt = {
 
 const colorClass = (v) => v >= 0 ? 'pos' : 'neg';
 
-// ─── RELOJES ─────────────────────────────────────────────────
-function updateClocks() {
-    const opt = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    if (el('clockAR')) el('clockAR').innerText = 'BA ' + new Date().toLocaleTimeString('es-AR', { ...opt, timeZone: 'America/Argentina/Buenos_Aires' });
-    if (el('clockNY')) el('clockNY').innerText = 'NY ' + new Date().toLocaleTimeString('en-US', { ...opt, timeZone: 'America/New_York' });
-}
-setInterval(updateClocks, 1000);
-
 // ─── MÉTRICAS SUPERIORES ──────────────────────────────────────
 function updateTopMetrics(processed, totalVal) {
     let totalGainUSD = 0;
@@ -53,7 +45,7 @@ function updateTopMetrics(processed, totalVal) {
     }
 }
 
-// ─── RENDER ──────────────────────────────────────────────────
+// ─── RENDERIZADO DE TABLA ─────────────────────────────────────
 function renderAll() {
     let totalPortfolioUSD = 0;
     const tbody = el('posTable');
@@ -62,42 +54,31 @@ function renderAll() {
     const processed = positions.map(pos => {
         const info = priceCache[pos.ticker] || { price: 0, change: 0 };
         const holdings = pos.holdings || [];
-        
-        // 1. Cantidad Total
         const totalQty = holdings.reduce((s, h) => s + h.qty, 0);
         
-        // 2. Costo Total Invertido (Normalizado a USD)
+        // Calcular PPC y Costo en USD
+        // Si es AR, usamos el TC de compra guardado para no arrastrar inflación/devaluación al PPC
         const totalCostUSD = holdings.reduce((s, h) => {
-            const tcAlMomento = h.tc || mepRate || 1;
-            const priceInUSD = pos.type === 'ar' ? (h.price / tcAlMomento) : h.price;
-            return s + (priceInUSD * h.qty);
+            const costInUSD = pos.type === 'ar' ? (h.price / (h.tc || mepRate || 1)) : h.price;
+            return s + (costInUSD * h.qty);
         }, 0);
 
-        // 3. Precio Promedio de Compra (PPC) en su moneda original
-        const ppcOriginal = holdings.length > 0 
-            ? holdings.reduce((s, h) => s + (h.price * h.qty), 0) / totalQty 
-            : 0;
-
-        // 4. Valor Actual en USD
         const currentValUSD = pos.type === 'ar' 
             ? (info.price * totalQty / (mepRate || 1)) 
             : (info.price * totalQty);
 
         const pnlUSD = currentValUSD - totalCostUSD;
         const per = totalCostUSD > 0 ? (pnlUSD / totalCostUSD) * 100 : 0;
+        const ppcOriginal = holdings.length > 0 ? holdings.reduce((s, h) => s + (h.price * h.qty), 0) / totalQty : 0;
 
         totalPortfolioUSD += currentValUSD;
 
-        return { 
-            pos, info, qty: totalQty, 
-            valUSD: currentValUSD, 
-            costUSD: totalCostUSD, 
-            pnlUSD, per, ppcOriginal 
-        };
+        return { pos, info, qty: totalQty, valUSD: currentValUSD, costUSD: totalCostUSD, pnlUSD, per, ppcOriginal };
     });
 
     el('totalVal').innerText = fmt.usd(totalPortfolioUSD);
     updateTopMetrics(processed, totalPortfolioUSD);
+    renderPieChart(processed); // Siguiente item preparado
 
     if (processed.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" class="empty-row">Agregá tu primera posición arriba ↑</td></tr>';
@@ -107,8 +88,6 @@ function renderAll() {
     tbody.innerHTML = processed.map((item, i) => {
         const { pos, info, qty, valUSD, pnlUSD, per, ppcOriginal } = item;
         const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
-        
-        // Días de tenencia (del primer lote)
         const firstDate = new Date(pos.holdings[0]?.date || new Date());
         const tenencia = Math.ceil(Math.abs(new Date() - firstDate) / (1000*60*60*24));
 
@@ -129,23 +108,44 @@ function renderAll() {
     }).join('');
 }
 
-// ─── ACCIONES & API ──────────────────────────────────────────
+// ─── GRÁFICO DE TORTA ─────────────────────────────────────────
+function renderPieChart(processed) {
+    const ctx = el('pieChart')?.getContext('2d');
+    if (!ctx || processed.length === 0) return;
+
+    if (charts.pie) charts.pie.destroy();
+    
+    charts.pie = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: processed.map(p => p.pos.ticker),
+            datasets: [{
+                data: processed.map(p => p.valUSD),
+                backgroundColor: ['#378ADD', '#1D9E75', '#E8A838', '#E05C5C', '#8B5CF6'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            plugins: { legend: { display: false } },
+            maintainAspectRatio: false,
+            cutout: '75%'
+        }
+    });
+}
+
+// ─── ACCIONES E INIT (Simplificado) ───────────────────────────
 async function getPrice(ticker, type) {
     try {
-        let url;
-        if (type === 'crypto') {
-            const map = { BTC:'bitcoin', ETH:'ethereum', SOL:'solana', USDT:'tether' };
-            const id = map[ticker] || ticker.toLowerCase();
-            url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd&include_24hr_change=true`;
-        } else {
-            const symbol = type === 'ar' ? `${ticker}.BA` : ticker;
-            url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`;
-        }
+        const symbol = type === 'ar' ? `${ticker}.BA` : ticker;
+        const url = type === 'crypto' 
+            ? `https://api.coingecko.com/api/v3/simple/price?ids=${ticker.toLowerCase()}&vs_currencies=usd&include_24hr_change=true`
+            : `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`;
+        
         const res = await fetch(`${PROXY}?url=${encodeURIComponent(url)}`);
         const data = await res.json();
         
         if (type === 'crypto') {
-            const id = Object.keys(data)[0];
+            const id = ticker.toLowerCase();
             return { price: data[id].usd, change: data[id].usd_24h_change };
         }
         const meta = data.chart.result[0].meta;
@@ -169,15 +169,12 @@ async function handleAdd(e) {
     const existing = positions.find(p => p.ticker === ticker);
 
     if (existing) {
-        if (!existing.holdings) existing.holdings = [];
         existing.holdings.push(holding);
     } else {
         positions.push({ ticker, type: activeType, holdings: [holding] });
     }
 
     lsSet(LS_POSITIONS, positions);
-    ['tickerInput', 'qtyInput', 'avgInput', 'daysInput'].forEach(id => el(id).value = '');
-    
     priceCache[ticker] = await getPrice(ticker, activeType);
     renderAll();
 }
@@ -189,20 +186,14 @@ window.deletePos = (i) => {
 };
 
 async function init() {
-    updateClocks();
     positions = lsGet(LS_POSITIONS) || [];
+    const mep = await fetch(`${PROXY}?url=${encodeURIComponent('https://dolarapi.com/v1/dolares/bolsa')}`).then(r => r.json());
+    mepRate = parseFloat(mep.venta);
     
-    try {
-        const mep = await fetch(`${PROXY}?url=${encodeURIComponent('https://dolarapi.com/v1/dolares/bolsa')}`).then(r => r.json());
-        mepRate = parseFloat(mep.venta);
-        if (el('sourceRow')) el('sourceRow').innerText = `Dólar MEP: $${mepRate}`;
-    } catch(e) { console.error("Error MEP"); }
-
     if (positions.length > 0) {
         const results = await Promise.all(positions.map(p => getPrice(p.ticker, p.type)));
         positions.forEach((p, i) => priceCache[p.ticker] = results[i]);
     }
-    
     renderAll();
     el('addBtn').onclick = handleAdd;
 }
