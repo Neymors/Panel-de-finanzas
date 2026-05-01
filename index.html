@@ -58,20 +58,27 @@
 
         <!-- GRÁFICOS -->
         <section class="charts-row">
+            <!-- Pie Chart: Distribución -->
             <div class="card">
                 <div class="card-title">Distribución del Portfolio</div>
                 <canvas id="pieChart"></canvas>
                 <div id="pieLegend" class="pie-legend"></div>
             </div>
+            
+            <!-- Line Chart: Histórico -->
             <div class="card">
                 <div class="card-title">Portfolio vs Benchmark</div>
+                
+                <!-- Botones de rango (1M, 6M, YTD, 1Y) -->
                 <div class="range-row">
-                    <button class="range-btn" data-range="1m">1M</button>
+                    <button class="range-btn active" data-range="1m">1M</button>
                     <button class="range-btn" data-range="6m">6M</button>
-                    <button class="range-btn active" data-range="ytd">YTD</button>
+                    <button class="range-btn" data-range="ytd">YTD</button>
                     <button class="range-btn" data-range="1y">1Y</button>
                 </div>
+                
                 <canvas id="lineChart"></canvas>
+                
                 <div class="line-legend">
                     <span><span class="leg-line" style="background: var(--blue);"></span> Mi Portfolio</span>
                     <span><span class="leg-line leg-dashed"></span> Benchmark</span>
@@ -80,17 +87,19 @@
         </section>
 
         <!-- FORMULARIO AGREGAR -->
-        <section class="add-card">
+        section class="add-card">
+            <!-- Botones de tipo de activo (Argentina, Global, Cripto) -->
             <div class="type-toggle">
                 <button class="type-btn active" data-type="ar">Argentina</button>
                 <button class="type-btn" data-type="global">Global</button>
                 <button class="type-btn" data-type="crypto">Cripto</button>
             </div>
+            
             <form id="addForm" class="form-row" onsubmit="return false;">
-                <input type="text" id="tickerInput" placeholder="TICKER (AL30, BTC, AAPL)" autocomplete="off">
-                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" inputmode="decimal">
-                <input type="number" id="avgInput" placeholder="Precio Prom. Compra" step="any" inputmode="decimal">
-                <input type="number" id="daysInput" placeholder="Días tenencia" value="0" inputmode="numeric">
+                <input type="text" id="tickerInput" placeholder="TICKER (AL30, BTC, AAPL)" autocomplete="off" maxlength="10">
+                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" inputmode="decimal" min="0">
+                <input type="number" id="avgInput" placeholder="Precio Prom. Compra" step="any" inputmode="decimal" min="0">
+                <input type="number" id="daysInput" placeholder="Días tenencia" value="0" inputmode="numeric" min="0">
                 <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
             </form>
             <div id="addError" class="error-msg"></div>
