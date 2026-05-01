@@ -1,6 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | BYMA + Yahoo + CoinGecko + DolarApi
+ * Version: 1.2.0 (Stable MVP)
  */
 'use strict';
 
@@ -167,8 +168,6 @@ function renderLineChart(processed) {
   if (!ctx) return;
   if (State.charts.line) State.charts.line.destroy();
 
-  // Por ahora usa datos simulados estructurados. 
-  // En v2 se reemplazará por histórico real de localStorage.
   const history = Storage.get('amygdale_history_v1') || [];
   const labels = history.length > 0 
     ? history.map(h => new Date(h.date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }))
@@ -190,7 +189,10 @@ function renderLineChart(processed) {
       plugins: { legend: { display: false } },
       maintainAspectRatio: false,
       responsive: true,
-      scales: { x: { display: false }, y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v/1000}k` } } }
+      scales: { 
+        x: { display: false }, 
+        y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v/1000}k` } } 
+      }
     }
   });
 }
@@ -405,7 +407,6 @@ async function init() {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       State.activeRange = btn.dataset.range;
-      // En v2: filtrar historial real según State.activeRange
       renderLineChart(State.processed);
     });
   });
