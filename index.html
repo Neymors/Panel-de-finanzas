@@ -1,137 +1,128 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-  <meta charset="UTF-8" />
-  <link rel="icon" href="data:,">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Amygdalé</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-  <link rel="stylesheet" href="style.css">
-  <link rel="shortcut icon" href="assets/Amygdale.ico" type="image/x-icon">
-  <link rel="icon" href="assets/Amygdale.png" type="image/png">
-
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Amygdalé - Dashboard financiero personal Local-First">
+    <title>Amygdalé — Financial Dashboard & Risk Control</title>
+    
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Estilos -->
+    <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-  <div class="container">
+    <div class="container">
+        <!-- HEADER -->
+        <header class="header">
+            <div>
+                <h1>Amygdalé</h1>
+                <div class="subtitle">Second Brain Financial Control</div>
+                <div class="clock-row">
+                    <span id="clockAR">BA --:--:--</span>
+                    <span class="clock-sep">|</span>
+                    <span id="clockNY">NY --:--:--</span>
+                </div>
+                <div id="sourceRow"></div>
+            </div>
+            <div class="total-block">
+                <div class="total-label">Valor Total (USD)</div>
+                <div id="totalVal" class="total-val">—</div>
+            </div>
+        </header>
 
-    <div class="header">
-      <div>
-        <h1>Amygdalé</h1>
-        <div class="subtitle">
-          <div id="sourceRow"></div>
-        </div>
-      </div>
-      <div class="total-block">
-        <div class="total-label">Valor total</div>
-        <div class="total-val" id="totalVal">—</div>
-        <div class="clock-row">
-          <span id="clockAR"></span>
-          <span class="clock-sep">·</span>
-          <span id="clockNY"></span>
-        </div>
-      </div>
+        <!-- MÉTRICAS -->
+        <section class="metrics">
+            <div class="metric">
+                <div class="metric-label">Ganancia Total</div>
+                <div id="totalGain" class="metric-val">—</div>
+                <div id="totalGainPct" class="metric-sub">—</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Posiciones Activas</div>
+                <div id="posCount" class="metric-val">0</div>
+                <div class="metric-sub">en cartera</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Mejor Activo Hoy</div>
+                <div id="bestTicker" class="metric-val">—</div>
+                <div id="bestPct" class="metric-sub">—</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Portfolio Hoy vs Ayer</div>
+                <div id="todayPct" class="metric-val">—</div>
+                <div id="todayAbs" class="metric-sub">—</div>
+            </div>
+        </section>
+
+        <!-- GRÁFICOS -->
+        <section class="charts-row">
+            <div class="card">
+                <div class="card-title">Distribución del Portfolio</div>
+                <canvas id="pieChart"></canvas>
+                <div id="pieLegend" class="pie-legend"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Portfolio vs Benchmark</div>
+                <div class="range-row">
+                    <button class="range-btn" data-range="1m">1M</button>
+                    <button class="range-btn" data-range="6m">6M</button>
+                    <button class="range-btn active" data-range="ytd">YTD</button>
+                    <button class="range-btn" data-range="1y">1Y</button>
+                </div>
+                <canvas id="lineChart"></canvas>
+                <div class="line-legend">
+                    <span><span class="leg-line" style="background: var(--blue);"></span> Mi Portfolio</span>
+                    <span><span class="leg-line leg-dashed"></span> Benchmark</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- FORMULARIO AGREGAR -->
+        <section class="add-card">
+            <div class="type-toggle">
+                <button class="type-btn active" data-type="ar">Argentina</button>
+                <button class="type-btn" data-type="global">Global</button>
+                <button class="type-btn" data-type="crypto">Cripto</button>
+            </div>
+            <form id="addForm" class="form-row" onsubmit="return false;">
+                <input type="text" id="tickerInput" placeholder="TICKER (AL30, BTC, AAPL)" autocomplete="off">
+                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" inputmode="decimal">
+                <input type="number" id="avgInput" placeholder="Precio Prom. Compra" step="any" inputmode="decimal">
+                <input type="number" id="daysInput" placeholder="Días tenencia" value="0" inputmode="numeric">
+                <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
+            </form>
+            <div id="addError" class="error-msg"></div>
+        </section>
+
+        <!-- TABLA DE POSICIONES -->
+        <section class="table-card">
+            <div class="card-title" style="margin-bottom: 0.75rem;">Mis Posiciones</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Activo</th>
+                            <th>Precio</th>
+                            <th>% Día</th>
+                            <th>Cantidad</th>
+                            <th>PPC</th>
+                            <th>Tenencia</th>
+                            <th>% Cartera</th>
+                            <th>P&L</th>
+                            <th>PER %</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="posTable">
+                        <!-- Filas inyectadas por JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
     </div>
 
-    <div class="metrics">
-      <div class="metric">
-        <div class="metric-label">Ganancia total</div>
-        <div class="metric-val" id="totalGain">—</div>
-        <div class="metric-sub" id="totalGainPct">—</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Portfolio hoy</div>
-        <div class="metric-val" id="todayPct">—</div>
-        <div class="metric-sub" id="todayAbs">vs ayer</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Posiciones</div>
-        <div class="metric-val" id="posCount">0</div>
-        <div class="metric-sub">activas</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Mejor hoy</div>
-        <div class="metric-val" id="bestTicker">—</div>
-        <div class="metric-sub" id="bestPct">—</div>
-      </div>
-    </div>
-
-    <div class="charts-row">
-      <div class="card">
-        <div class="card-title">Distribución del portfolio</div>
-        <div style="position:relative;height:200px;">
-          <canvas id="pieChart" role="img" aria-label="Gráfico de torta con distribución del portfolio">Sin datos
-            aún.</canvas>
-        </div>
-        <div class="pie-legend" id="pieLegend"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Portfolio vs Benchmark</div>
-        <div class="range-row">
-          <button class="range-btn active" data-range="1M">1M</button>
-          <button class="range-btn" data-range="6M">6M</button>
-          <button class="range-btn" data-range="YTD">YTD</button>
-          <button class="range-btn" data-range="1Y">1Y</button>
-        </div>
-        <div style="position:relative;height:170px;">
-          <canvas id="lineChart" role="img" aria-label="Gráfico de líneas comparando portfolio vs benchmark">Sin datos
-            aún.</canvas>
-        </div>
-        <div class="line-legend">
-          <span><span class="leg-line" style="background:#378ADD;"></span>Mi portfolio</span>
-          <span><span class="leg-line leg-dashed"></span>Benchmark (MERVAL / BRK-B)</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="add-card">
-      <div class="card-title">Agregar posición</div>
-      <div class="type-toggle">
-        <button class="type-btn active" data-type="ar">Argentina (Rava)</button>
-        <button class="type-btn" data-type="global">Global</button>
-        <button class="type-btn" data-type="crypto">Cripto</button>
-      </div>
-      <div class="form-row">
-        <input id="tickerInput" placeholder="Activo (ej: GGAL)" autocomplete="off" />
-        <input id="qtyInput" placeholder="Cantidad" type="number" />
-        <input id="avgInput" placeholder="Precio Promedio Compra" type="number" />
-        <input id="daysInput" placeholder="Días de tenencia" type="number" />
-        <button class="add-btn" id="addBtn">+ Agregar</button>
-      </div>
-      <div class="error-msg" id="addError"></div>
-    </div>
-
-    <div class="table-card">
-      <div class="card-title">Mis posiciones</div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Activo</th>
-              <th>Precio</th>
-              <th>% Día</th>
-              <th>Cantidad</th>
-              <th>Precio Promedio Compra</th>
-              <th>Tenencia</th>
-              <th>% En Cartera</th>
-              <th>P&L</th>
-              <th>PER</th>
-              <th></th></tr>
-          </thead>
-          <tbody id="posTable">
-            <tr class="empty-row">
-              <td colspan="9">Agregá tu primera posición arriba ↑</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-  </div>
-  <script src="/script.js"></script>
+    <!-- Script Principal -->
+    <script src="script.js"></script>
 </body>
-
 </html>
