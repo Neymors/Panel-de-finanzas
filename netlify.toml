@@ -1,8 +1,41 @@
+# Amygdalé — Netlify Configuration
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
 [build]
+  # Carpeta de funciones serverless
   functions = "netlify/functions"
 
+  # Si usás npm run build, descomentá estas líneas:
+  # command   = "npm run build"
+  # publish   = "dist"
+
+# ── Proxy CORS ──────────────────────────────────────
+# Mapea /api/proxy → /.netlify/functions/proxy
+# De esta forma el frontend llama a /api/proxy?url=...
+# sin exponer la ruta interna de Netlify Functions.
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
+  from   = "/api/proxy"
+  to     = "/.netlify/functions/proxy"
   status = 200
-  force = true
+
+# ── SPA fallback (opcional) ──────────────────────────
+# Si en el futuro migrás a React Router o similar:
+# [[redirects]]
+#   from   = "/*"
+#   to     = "/index.html"
+#   status = 200
+
+# ── Headers de seguridad globales ───────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options        = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+
+# La función proxy ya devuelve su propio CORS header,
+# pero lo reforzamos también a nivel CDN:
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"

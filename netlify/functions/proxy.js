@@ -1,123 +1,100 @@
-'use strict';
+/**
+ * Amygdalé — Proxy CORS
+ * Netlify Function: /netlify/functions/proxy
+ * Mapeada como /api/proxy via netlify.toml
+ *
+ * Uso: GET /api/proxy?url=https://api.externa.com/endpoint
+ *
+ * Dominios permitidos (whitelist de seguridad):
+ *   - open.bymadata.com.ar      (BYMA — bonos AR)
+ *   - dolarapi.com              (Dólar MEP)
+ *   - api.coingecko.com         (Cripto)
+ *   - query1.finance.yahoo.com  (Acciones)
+ *   - query2.finance.yahoo.com  (Acciones fallback)
+ */
 
-const ALLOWED_ORIGINS = [
-  'rava.com',
+const ALLOWED_DOMAINS = [
+  'open.bymadata.com.ar',
+  'dolarapi.com',
+  'api.coingecko.com',
   'query1.finance.yahoo.com',
   'query2.finance.yahoo.com',
-  'api.coingecko.com',
-  'dolarapi.com',
-  'api.bluelytics.com.ar',
-  'api.argentinadatos.com',
-  'restcountries.com',
-  'api.exchangerate-api.com',
 ];
 
-const TIMEOUT_MS = 12000;
-
-function isAllowed(url) {
-  try {
-    const { hostname } = new URL(url);
-    return ALLOWED_ORIGINS.some(o => hostname === o || hostname.endsWith('.' + o));
-  } catch {
-    return false;
-  }
-}
-
-exports.handler = async function (event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers, body: '' };
-  }
-
+exports.handler = async (event) => {
+  // Solo GET
   if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
-
-  const params = event.queryStringParameters || {};
-  const targetUrl = params.url;
-
-  if (!targetUrl) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing url parameter' }) };
-  }
-
-  let decoded;
-  try {
-    decoded = decodeURIComponent(targetUrl);
-  } catch {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid url encoding' }) };
-  }
-
-  if (!isAllowed(decoded)) {
-    let hostname = decoded;
-    try { hostname = new URL(decoded).hostname; } catch {}
     return {
-      statusCode: 403,
-      headers,
-      body: JSON.stringify({ error: `Domain not allowed: ${hostname}` }),
+      statusCode: 405,
+      body: JSON.stringify({ error: 'Method Not Allowed' }),
     };
   }
 
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const targetUrl = event.queryStringParameters?.url;
+
+  if (!targetUrl) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'Falta parámetro ?url=' }),
+    };
+  }
+
+  // Validar URL
+  let parsed;
+  try {
+    parsed = new URL(decodeURIComponent(targetUrl));
+  } catch {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'URL inválida' }),
+    };
+  }
+
+  // Whitelist de dominios
+  const domainAllowed = ALLOWED_DOMAINS.some(
+    (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d)
+  );
+
+  if (!domainAllowed) {
+    return {
+      statusCode: 403,
+      body: JSON.stringify({
+        error: `Dominio no permitido: ${parsed.hostname}`,
+        allowed: ALLOWED_DOMAINS,
+      }),
+    };
+  }
 
   try {
-    const res = await fetch(decoded, {
-      signal: controller.signal,
+    const response = await fetch(parsed.toString(), {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; PortfolioDashboard/1.0)',
-        'Accept': 'application/json, text/html, */*',
+        'User-Agent': 'Mozilla/5.0 (compatible; Amygdale/2.0)',
+        'Accept':     'application/json',
       },
+      // Timeout de 8 segundos
+      signal: AbortSignal.timeout(8000),
     });
-    clearTimeout(tid);
 
-    if (!res.ok) {
-      return {
-        statusCode: res.status,
-        headers,
-        body: JSON.stringify({ error: `Upstream HTTP ${res.status}`, url: decoded }),
-      };
-    }
-
-    const contentType = res.headers.get('content-type') || '';
-    let body;
-
-    if (contentType.includes('application/json')) {
-      const json = await res.json();
-      body = JSON.stringify(json);
-    } else {
-      const text = await res.text();
-      try {
-        JSON.parse(text);
-        body = text;
-      } catch {
-        body = JSON.stringify({ raw: text });
-      }
-    }
-
-    return { statusCode: 200, headers, body };
-
-  } catch (err) {
-    clearTimeout(tid);
-
-    if (err.name === 'AbortError') {
-      return {
-        statusCode: 504,
-        headers,
-        body: JSON.stringify({ error: 'Upstream timeout', url: decoded }),
-      };
-    }
+    const contentType = response.headers.get('content-type') || 'application/json';
+    const body        = await response.text();
 
     return {
-      statusCode: 502,
-      headers,
-      body: JSON.stringify({ error: err.message || 'Proxy error', url: decoded }),
+      statusCode: response.status,
+      headers: {
+        'Content-Type':                'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control':               'public, max-age=60', // 1 min de caché en CDN
+      },
+      body,
+    };
+  } catch (err) {
+    const isTimeout = err.name === 'TimeoutError' || err.name === 'AbortError';
+    return {
+      statusCode: isTimeout ? 504 : 502,
+      body: JSON.stringify({
+        error: isTimeout ? 'Timeout al contactar la API externa' : 'Error de red',
+        detail: err.message,
+      }),
     };
   }
 };
