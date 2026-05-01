@@ -4,39 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Amygdalé - Dashboard financiero personal Local-First">
-    <title>Amygdalé — Financial Dashboard & Risk Control</title>
-    
+    <title>Amygdalé — Financial Dashboard</title>
     <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
-    <!-- Estilos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="style.css">
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/Amygdale/assets/Amygdale.ico">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
 </head>
 <body>
     <div class="container">
-        
         <!-- HEADER -->
         <header class="header">
             <div class="header-info">
                 <h1>Amygdalé</h1>
                 <div class="subtitle">Second Brain Financial Control</div>
-                
                 <div class="clock-row">
                     <span id="clockAR">BA --:--:--</span>
                     <span class="clock-sep">|</span>
                     <span id="clockNY">NY --:--:--</span>
                 </div>
-                <div id="sourceRow"></div>
+                <div id="sourceRow" class="source-row"></div>
             </div>
-            
             <div class="total-block">
                 <div class="total-label">Valor Total (USD)</div>
                 <div id="totalVal" class="total-val">—</div>
             </div>
         </header>
 
-        <!-- MÉTRICAS PRINCIPALES -->
+        <!-- MÉTRICAS -->
         <section class="metrics">
             <div class="metric">
                 <div class="metric-label">Ganancia Total</div>
@@ -44,9 +38,9 @@
                 <div id="totalGainPct" class="metric-sub">—</div>
             </div>
             <div class="metric">
-                <div class="metric-label">Posiciones Activas</div>
+                <div class="metric-label">Posiciones</div>
                 <div id="posCount" class="metric-val">0</div>
-                <div class="metric-sub">en cartera</div>
+                <div class="metric-sub">activas</div>
             </div>
             <div class="metric">
                 <div class="metric-label">Mejor Activo Hoy</div>
@@ -54,43 +48,35 @@
                 <div id="bestPct" class="metric-sub">—</div>
             </div>
             <div class="metric">
-                <div class="metric-label">Portfolio Hoy vs Ayer</div>
+                <div class="metric-label">Portfolio vs Ayer</div>
                 <div id="todayPct" class="metric-val">—</div>
                 <div id="todayAbs" class="metric-sub">—</div>
             </div>
         </section>
 
-        <!-- GRÁFICOS -->
+        <!-- GRÁFICOS (Con wrappers para evitar desbordes) -->
         <section class="charts-row">
-            <!-- Pie Chart -->
             <div class="card">
-                <div class="card-title">Distribución del Portfolio</div>
-                <!-- WRAPPER CLAVE: Encapsula el canvas para que no se desborde -->
+                <div class="card-title">Distribución</div>
                 <div class="chart-wrapper">
                     <canvas id="pieChart"></canvas>
                 </div>
                 <div id="pieLegend" class="pie-legend"></div>
             </div>
-            
-            <!-- Line Chart -->
             <div class="card">
-                <div class="card-title">Portfolio vs Benchmark</div>
-                
+                <div class="card-title">Histórico (Portfolio vs Benchmark)</div>
                 <div class="range-row">
-                    <button class="range-btn active" data-range="1m">1M</button>
+                    <button class="range-btn" data-range="1m">1M</button>
                     <button class="range-btn" data-range="6m">6M</button>
-                    <button class="range-btn" data-range="ytd">YTD</button>
+                    <button class="range-btn active" data-range="ytd">YTD</button>
                     <button class="range-btn" data-range="1y">1Y</button>
                 </div>
-                
-                <!-- WRAPPER CLAVE -->
                 <div class="chart-wrapper">
                     <canvas id="lineChart"></canvas>
                 </div>
-                
                 <div class="line-legend">
                     <span><span class="leg-line" style="background: var(--blue);"></span> Mi Portfolio</span>
-                    <span><span class="leg-line leg-dashed"></span> Benchmark</span>
+                    <span><span class="leg-line leg-dashed"></span> Benchmark (MERVAL)</span>
                 </div>
             </div>
         </section>
@@ -102,45 +88,50 @@
                 <button class="type-btn" data-type="global">Global</button>
                 <button class="type-btn" data-type="crypto">Cripto</button>
             </div>
-            
             <form class="form-row" onsubmit="return false;">
-                <input type="text" id="tickerInput" placeholder="TICKER (AL30, BTC, AAPL)" autocomplete="off" maxlength="10">
-                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" inputmode="decimal" min="0">
-                <input type="number" id="avgInput" placeholder="Precio Prom. Compra" step="any" inputmode="decimal" min="0">
-                <input type="number" id="daysInput" placeholder="Días tenencia" value="0" inputmode="numeric" min="0">
+                <input type="text" id="tickerInput" placeholder="TICKER (AL30, AAPL)" autocomplete="off" maxlength="10">
+                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" min="0">
+                <input type="number" id="avgInput" placeholder="Precio Compra" step="any" min="0">
+                <input type="number" id="daysInput" placeholder="Días" value="0" min="0">
                 <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
             </form>
             <div id="addError" class="error-msg"></div>
         </section>
 
-        <!-- TABLA DE POSICIONES -->
+        <!-- TABLA -->
         <section class="table-card">
-            <div class="card-title">Mis Posiciones</div>
+            <div class="card-title">Posiciones Activas</div>
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
                             <th>Activo</th>
                             <th>Precio</th>
-                            <th>% Día</th>
-                            <th>Cantidad</th>
+                            <th>Var. Día</th>
+                            <th>Cant.</th>
                             <th>PPC</th>
                             <th>Tenencia</th>
-                            <th>% Cartera</th>
-                            <th>P&L</th>
-                            <th>PER %</th>
+                            <th>% Cart.</th>
+                            <th>P&L (USD)</th>
+                            <th>Perf.</th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="posTable">
-                        <!-- Filas inyectadas dinámicamente por JS -->
+                        <!-- Inyectado por JS -->
                     </tbody>
                 </table>
             </div>
-        </section>        
+        </section>
+
+        <!-- CONTROLES EXTRAS -->
+        <div class="footer-controls">
+            <button class="ctrl-btn" id="btnExport" title="Backup JSON">📥 Exportar</button>
+            <input type="file" id="importInput" style="display:none" accept=".json">
+            <button class="ctrl-btn" id="btnImport" title="Restaurar Backup">📤 Importar</button>
+        </div>
     </div>
 
-    <!-- Script Principal -->
     <script src="script.js"></script>
 </body>
 </html>
