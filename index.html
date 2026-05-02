@@ -10,7 +10,7 @@
 <body>
     <div class="container">
         <header class="header">
-            <div>
+            <div class="header-info">
                 <h1>Amygdalé</h1>
                 <div class="subtitle">Second Brain Financial Control</div>
                 <div class="clock-row">
@@ -82,10 +82,10 @@
                 <button class="type-btn" data-type="crypto">Cripto</button>
             </div>
             <form class="form-row" onsubmit="return false;">
-                <input type="text" id="tickerInput" placeholder="TICKER (AL30, AAPL)" autocomplete="off">
-                <input type="number" id="qtyInput" placeholder="Cantidad" step="any">
-                <input type="number" id="avgInput" placeholder="Precio Compra" step="any">
-                <input type="number" id="daysInput" placeholder="Días" value="0">
+                <input type="text" id="tickerInput" placeholder="TICKER (AL30, AAPL)" autocomplete="off" maxlength="10">
+                <input type="number" id="qtyInput" placeholder="Cantidad" step="any" min="0">
+                <input type="number" id="avgInput" placeholder="Precio Compra" step="any" min="0">
+                <input type="number" id="daysInput" placeholder="Días tenencia" value="0" min="0">
                 <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
             </form>
             <div id="addError" class="error-msg"></div>
@@ -116,7 +116,11 @@
             </div>
         </section>
 
-        <footer class="footer"></footer>
+        <div class="footer-controls">
+            <button class="ctrl-btn" id="btnExport">📥 Exportar</button>
+            <input type="file" id="importInput" style="display:none" accept=".json">
+            <button class="ctrl-btn" id="btnImport">📤 Importar</button>
+        </div>
     </div>
     <script src="script.js"></script>
 </body>
