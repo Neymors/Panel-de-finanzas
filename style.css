@@ -1,6 +1,5 @@
 /* ───────── RESET & VARIABLES ───────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 :root {
     --bg: #f7f6f3;
     --surface: #ffffff;
@@ -21,7 +20,6 @@
     --font-serif: 'Georgia', 'Times New Roman', serif;
     --font-mono: 'SF Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
 }
-
 @media (prefers-color-scheme: dark) {
     :root {
         --bg: #121214;
@@ -40,8 +38,6 @@
         --teal: #2dd4bf;
     }
 }
-
-/* ───────── BASE & LAYOUT ───────── */
 body {
     background: var(--bg);
     color: var(--text);
@@ -56,7 +52,6 @@ body {
     background-attachment: fixed;
 }
 .container { max-width: 1150px; margin: 0 auto; padding: 2rem 1.5rem; }
-
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
@@ -73,8 +68,15 @@ body {
     display: flex; align-items: center; gap: 8px; margin-top: 6px;
     font-size: 12px; font-family: var(--font-mono); color: var(--text2);
 }
-#sourceRow { font-size: 10px; color: var(--blue); font-family: var(--font-mono); margin-top: 2px; }
-
+/* ✅ PUNTO 4: Dólar MEP en celeste (como la línea divisoria) */
+#sourceRow { 
+    font-size: 10px; 
+    color: var(--blue); 
+    font-family: var(--font-mono); 
+    margin-top: 2px; 
+    font-weight: 600;
+    text-shadow: 0 0 4px var(--blue);
+}
 .total-block { text-align: right; }
 .total-label {
     font-size: 11px; color: var(--text3); text-transform: uppercase;
@@ -190,7 +192,29 @@ tr:hover td:first-child { border-left: 3px solid var(--blue); padding-left: 9px;
 .pos { color: var(--green); }
 .neg { color: var(--red); }
 
-.footer-controls { margin-top: 1.5rem; display: flex; gap: 10px; justify-content: center; }
+/* Controles de Exportar/Importar */
+.footer-controls { 
+    margin-top: 1.5rem; 
+    display: flex; 
+    gap: 10px; 
+    justify-content: center;
+}
+.ctrl-btn {
+    font-size: 11px; 
+    font-family: var(--font-mono); 
+    padding: 8px 16px;
+    border: 1px solid var(--border-strong); 
+    border-radius: 6px;
+    background: var(--surface); 
+    color: var(--text2); 
+    cursor: pointer; 
+    transition: all 0.15s;
+}
+.ctrl-btn:hover { 
+    background: var(--blue); 
+    color: #fff; 
+    border-color: var(--blue); 
+}
 
 /* ───────── RESPONSIVE ───────── */
 @media (max-width: 850px) {
