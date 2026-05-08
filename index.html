@@ -4,11 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Amygdalé — Financial Dashboard & Risk Control</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <meta name="description" content="Dashboard financiero personal Local-First con seguimiento de bonos, acciones y criptoactivos.">
+    
+    <!-- Chart.js CDN (carga diferida para no bloquear renderizado) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+    
+    <!-- Estilos -->
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
 </head>
 <body>
     <div class="container">
+        <!-- HEADER -->
         <header class="header">
             <div class="header-info">
                 <h1>Amygdalé</h1>
@@ -26,6 +33,7 @@
             </div>
         </header>
 
+        <!-- MÉTRICAS -->
         <section class="metrics">
             <div class="metric">
                 <div class="metric-label">Ganancia Total</div>
@@ -49,6 +57,7 @@
             </div>
         </section>
 
+        <!-- GRÁFICOS (Con wrappers para encapsular correctamente) -->
         <section class="charts-row">
             <div class="card">
                 <div class="card-title">Distribución del Portfolio</div>
@@ -75,6 +84,7 @@
             </div>
         </section>
 
+        <!-- FORMULARIO -->
         <section class="add-card">
             <div class="type-toggle">
                 <button class="type-btn active" data-type="ar">Argentina</button>
@@ -91,6 +101,7 @@
             <div id="addError" class="error-msg"></div>
         </section>
 
+        <!-- TABLA DE POSICIONES -->
         <section class="table-card">
             <div class="card-title">Mis Posiciones</div>
             <div class="table-wrap">
@@ -116,9 +127,11 @@
             </div>
         </section>
 
-        <!-- Controles de Exportar/Importar (inyectados por JS) -->
+        <!-- CONTROLES DINÁMICOS (Export/Import inyectados por JS) -->
         <div id="controlsContainer"></div>
     </div>
+
+    <!-- Script Principal -->
     <script src="script.js"></script>
 </body>
 </html>
