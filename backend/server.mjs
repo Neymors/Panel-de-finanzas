@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static'
 import axios from 'axios'
 import { fileURLToPath } from 'url'
 import path from 'path'
+import { request } from 'http'
 
 // Configuración para resolver rutas de archivos estáticos en ES Modules
 const __filename = fileURLToPath(import.meta.url)
@@ -22,6 +23,10 @@ await fastify.register(cors, {
 await fastify.register(fastifyStatic, {
   root: __dirname,
   prefix: '/',
+})
+
+fastify.get('/', async (request, reply) => {
+  return reply.sendFile('index.html')
 })
 
 /*
