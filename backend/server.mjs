@@ -4,7 +4,6 @@ import fastifyStatic from '@fastify/static'
 import axios from 'axios'
 import { fileURLToPath } from 'url'
 import path from 'path'
-import { request } from 'http'
 
 // Configuración para resolver rutas de archivos estáticos en ES Modules
 const __filename = fileURLToPath(import.meta.url)
@@ -25,16 +24,11 @@ await fastify.register(fastifyStatic, {
   prefix: '/',
 })
 
-fastify.get('/', async (request, reply) => {
-  return reply.sendFile('index.html')
-})
-
 /*
 |--------------------------------------------------------------------------
 | CONFIG
 |--------------------------------------------------------------------------
 */
-
 const PORT = process.env.PORT || 3000
 const CACHE_DURATION = 60 * 1000
 
@@ -43,7 +37,6 @@ const CACHE_DURATION = 60 * 1000
 | CACHE
 |--------------------------------------------------------------------------
 */
-
 let cache = {
   data: null,
   updatedAt: 0
@@ -54,37 +47,22 @@ let cache = {
 | HELPERS
 |--------------------------------------------------------------------------
 */
-
 function normalizeBond(bond) {
   return {
     symbol: bond.especie,
-
     name: bond.nombre,
-
     type: bond.tipo,
-
     law: bond.ley,
-
     price: Number(bond.precio) / 1000,
-
     tir: Number(bond.tir),
-
     duration: Number(bond.duration),
-
     dm: Number(bond.dm),
-
     paridad: Number(bond.paridad),
-
     currentYield: Number(bond.current_yield),
-
     technicalValue: Number(bond.valor_tecnico),
-
     convexity: Number(bond.convexity),
-
     maturityDate: bond.vencimiento,
-
     lastUpdateDate: bond.fecha,
-
     updatedAt: new Date().toISOString()
   }
 }
@@ -93,70 +71,42 @@ async function fetchBondsFromRava() {
   const response = await axios.get(
     'https://mercado.rava.com/api/prices/bonos',
     {
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 10000
     }
   )
-
   return response.data?.datos || []
 }
 
 async function getBonds() {
   const now = Date.now()
-
-  /*
-  |--------------------------------------------------------------------------
-  | CACHE HIT
-  |--------------------------------------------------------------------------
-  */
-
-  if (
-    cache.data &&
-    now - cache.updatedAt < CACHE_DURATION
-  ) {
+  if (cache.data && now - cache.updatedAt < CACHE_DURATION) {
     return cache.data
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | FETCH
-  |--------------------------------------------------------------------------
-  */
-
   console.log('Fetching bonds from Rava...')
-
   const rawBonds = await fetchBondsFromRava()
-
   const normalized = rawBonds.map(normalizeBond)
-
-  /*
-  |--------------------------------------------------------------------------
-  | SAVE CACHE
-  |--------------------------------------------------------------------------
-  */
 
   cache = {
     data: normalized,
     updatedAt: now
   }
-
   return normalized
 }
 
 /*
 |--------------------------------------------------------------------------
-| ROUTES
+| ROUTES (FRONTEND & API)
 |--------------------------------------------------------------------------
 */
 
-/*
-|--------------------------------------------------------------------------
-| Health Check / API Status
-|--------------------------------------------------------------------------
-*/
+// Forzar explícitamente a que responda el archivo index.html en la raíz
+fastify.get('/', async (request, reply) => {
+  return reply.sendFile('index.html')
+})
 
+// API Status
 fastify.get('/api/status', async () => {
   return {
     success: true,
@@ -165,15 +115,9 @@ fastify.get('/api/status', async () => {
   }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Get all bonds
-|--------------------------------------------------------------------------
-*/
-
+// Get all bonds
 fastify.get('/api/bonds', async () => {
   const bonds = await getBonds()
-
   return {
     success: true,
     count: bonds.length,
@@ -182,134 +126,63 @@ fastify.get('/api/bonds', async () => {
   }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Get bond by symbol
-|--------------------------------------------------------------------------
-*/
-
+// Get bond by symbol
 fastify.get('/api/bonds/:symbol', async (request, reply) => {
   const { symbol } = request.params
-
   const bonds = await getBonds()
-
-  const bond = bonds.find(
-    (b) =>
-      b.symbol.toUpperCase() === symbol.toUpperCase()
-  )
+  const bond = bonds.find((b) => b.symbol.toUpperCase() === symbol.toUpperCase())
 
   if (!bond) {
     reply.code(404)
-
-    return {
-      success: false,
-      error: 'Bond not found'
-    }
+    return { success: false, error: 'Bond not found' }
   }
-
-  return {
-    success: true,
-    data: bond
-  }
+  return { success: true, data: bond }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Search bonds
-|--------------------------------------------------------------------------
-*/
-
+// Search bonds
 fastify.get('/api/search/:query', async (request) => {
   const { query } = request.params
-
   const bonds = await getBonds()
-
   const results = bonds.filter((bond) => {
     const q = query.toLowerCase()
-
-    return (
-      bond.symbol.toLowerCase().includes(q) ||
-      bond.name.toLowerCase().includes(q)
-    )
+    return bond.symbol.toLowerCase().includes(q) || bond.name.toLowerCase().includes(q)
   })
-
-  return {
-    success: true,
-    count: results.length,
-    data: results
-  }
+  return { success: true, count: results.length, data: results }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Top bonds by TIR
-|--------------------------------------------------------------------------
-*/
-
+// Top bonds by TIR
 fastify.get('/api/top/tir', async () => {
   const bonds = await getBonds()
-
   const sorted = [...bonds]
     .filter((b) => !isNaN(b.tir))
     .sort((a, b) => b.tir - a.tir)
     .slice(0, 20)
-
-  return {
-    success: true,
-    count: sorted.length,
-    data: sorted
-  }
+  return { success: true, count: sorted.length, data: sorted }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Top bonds by parity
-|--------------------------------------------------------------------------
-*/
-
+// Top bonds by parity
 fastify.get('/api/top/paridad', async () => {
   const bonds = await getBonds()
-
   const sorted = [...bonds]
     .filter((b) => !isNaN(b.paridad))
     .sort((a, b) => b.paridad - a.paridad)
     .slice(0, 20)
-
-  return {
-    success: true,
-    count: sorted.length,
-    data: sorted
-  }
+  return { success: true, count: sorted.length, data: sorted }
 })
 
-/*
-|--------------------------------------------------------------------------
-| Clear cache manually
-|--------------------------------------------------------------------------
-*/
-
+// Clear cache
 fastify.post('/api/cache/clear', async () => {
-  cache = {
-    data: null,
-    updatedAt: 0
-  }
-
-  return {
-    success: true,
-    message: 'Cache cleared',
-    timestamp: new Date().toISOString()
-  }
+  cache = { data: null, updatedAt: 0 }
+  return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
 })
 
 /*
 |--------------------------------------------------------------------------
-| START SERVER (Configurado para el entorno dinámico de Render)
+| START SERVER
 |--------------------------------------------------------------------------
 */
-
 const start = async () => {
   try {
-    // Es crítico usar host: '0.0.0.0' y convertir PORT a Number para que Render exponga el servicio
     await fastify.listen({
       port: Number(PORT),
       host: '0.0.0.0'
