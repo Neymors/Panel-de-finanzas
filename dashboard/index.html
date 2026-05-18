@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amygdalé — Financial Dashboard & Risk Control</title>
+    <meta name="description" content="Dashboard financiero personal Local-First con seguimiento de bonos, acciones y criptoactivos.">
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+    
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/x-icon" href="./assets/Amygdale.ico">
+</head>
+<body>
+    <!-- Notification stack container (fixed overlay, top-right) -->
+    <div id="notification-stack" class="notification-stack" aria-live="polite" aria-label="Notificaciones del sistema"></div>
+
+    <div class="container">
+        
+        <header class="header">
+            <div class="header-info">
+                <h1>Amygdalé</h1>
+                <div class="subtitle">Second Brain Financial Control</div>
+                <div class="clock-row">
+                    <span id="clockAR">BA --:--:--</span>
+                    <span class="clock-sep">|</span>
+                    <span id="clockNY">NY --:--:--</span>
+                </div>
+                <div id="sourceRow">Sincronizando cotizaciones...</div>
+            </div>
+            <div class="total-block">
+                <div class="total-label">Valor Total (USD)</div>
+                <div id="totalVal" class="total-amount">$0.00</div>
+            </div>
+        </header>
+
+        <section class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Rendimiento Diario</div>
+                <div id="todayPct" class="metric-val">0.00%</div>
+                <div id="todayAbs" class="metric-sub">$0.00</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">P&L Total Acumulado</div>
+                <div id="totalGain" class="metric-val">$0.00</div>
+                <div id="totalGainPct" class="metric-sub">0.00%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Mayor Variación Hoy</div>
+                <div id="bestTicker" class="metric-val">—</div>
+                <div id="bestPct" class="metric-sub">0.00%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Activos en Cartera</div>
+                <div id="posCount" class="metric-val">0</div>
+                <div class="metric-sub">Posiciones abiertas</div>
+            </div>
+        </section>
+
+        <section class="charts-grid">
+            <div class="chart-card">
+                <div class="card-title">Distribución de Activos</div>
+                <div class="chart-container pie-wrap">
+                    <canvas id="pieChart"></canvas>
+                </div>
+                <div id="pieLegend" class="chart-legend"></div>
+            </div>
+            
+            <div class="chart-card">
+                <div class="card-header-row">
+                    <div class="card-title">Evolución Histórica</div>
+                    <div class="range-selector">
+                        <button class="range-btn" data-range="1m">1M</button>
+                        <button class="range-btn" data-range="6m">6M</button>
+                        <button class="range-btn" data-range="1y">1Y</button>
+                        <button class="range-btn active" data-range="ytd">YTD</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="lineChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section class="add-card">
+            <div class="card-title">Operar / Agregar Posición</div>
+            
+            <div class="type-selector">
+                <button type="button" class="type-btn active" data-type="ar">Mercado Local (ARS/Bonos)</button>
+                <button type="button" class="type-btn" data-type="usd">Mercado Internacional (USD)</button>
+                <button type="button" class="type-btn" data-type="crypto">Criptoactivos (Crypto)</button>
+            </div>
+
+            <form id="addForm" class="add-form" autocomplete="off">
+                <input type="text" id="tickerInput" placeholder="Nombre" required>
+                <input type="number" id="qtyInput" placeholder="Cantidad numérica" step="any" min="00000" required>
+                <input type="number" id="avgInput" placeholder="Precio de compra (PPC)" step="any" min="0.0000" required>
+                <input type="number" id="daysInput" placeholder="Días de tenencia" value="0" min="0">
+                <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
+            </form>
+            <div id="addError" class="error-msg"></div>
+        </section>
+
+        <section class="table-card">
+            <div class="card-title">Mis Posiciones</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Activo</th>
+                            <th>Precio actual</th>
+                            <th>% Día</th>
+                            <th>Cantidad</th>
+                            <th>PPC Promedio</th>
+                            <th>Antigüedad</th>
+                            <th>% Cartera</th>
+                            <th>P&L Absoluto</th>
+                            <th>Rendimiento %</th>
+                            <th>Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="posTable">
+                        <tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <div id="controlsContainer"></div>
+    </div>
+
+    <script src="./script.js"></script>
+</body>
+</html>

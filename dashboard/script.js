@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
- * Vanilla JS | Local-First | BYMA + Yahoo + CoinGecko + DolarApi
- * Version: 2.1.3 — Stable & Production Ready
+ * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
+ * Version: 3.0 — Notification System & AI Risk Alerts
  */
 'use strict';
 
@@ -16,10 +16,18 @@ const CONFIG = {
   CACHE_TTL: 5 * 60 * 1000,      // 5 minutos
   DEFAULT_MEP: 1200,
   HISTORY_MAX: 365,
+  NOTIFICATION_MAX_VISIBLE: 5,
+  AUTO_DISMISS: {
+    success: 4500,
+    error: 7000,
+    warning: 8000,
+    info: 5000
+  }
 };
 
 const API = {
-  BYMA: 'https://open.bymadata.com.ar/van-api/robo/prices?symbol=',
+  BONDS_DATA: '/api/bonds',
+  BONDS_TOP_TIR: '/api/top/tir',
   DOLARAPI: 'https://dolarapi.com/v1/dolares/bolsa',
   COINGECKO: 'https://api.coingecko.com/api/v3/simple/price',
   YAHOO: 'https://query1.finance.yahoo.com/v8/finance/chart/',
@@ -38,11 +46,113 @@ const CRYPTO_MAP = {
 };
 
 /* ═══════════════════════════════════════════════
+   NOTIFICATION SYSTEM (Institutional Overlay)
+═══════════════════════════════════════════════ */
+const NotificationManager = {
+  stackElement: null,
+  queue: [],
+  activeCount: 0,
+
+  init() {
+    this.stackElement = document.getElementById('notification-stack');
+    if (!this.stackElement) {
+      console.warn('Notification stack container missing');
+      return;
+    }
+  },
+
+  show(type, title, message, duration = null) {
+    if (!this.stackElement) this.init();
+    if (!this.stackElement) return;
+
+    // Auto-dismiss duration based on type if not provided
+    const autoClose = duration !== null ? duration : CONFIG.AUTO_DISMISS[type] || 5000;
+
+    // Create notification element
+    const notif = document.createElement('div');
+    notif.className = `notification-card ${type}`;
+    notif.setAttribute('role', 'alert');
+    notif.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+
+    const iconMap = {
+      success: '✓',
+      error: '✗',
+      warning: '⚠',
+      info: 'ℹ'
+    };
+    const icon = iconMap[type] || '●';
+
+    notif.innerHTML = `
+      <div class="notification-icon">${icon}</div>
+      <div class="notification-content">
+        <div class="notification-title">${escapeHtml(title)}</div>
+        <div class="notification-message">${escapeHtml(message)}</div>
+        <div class="notification-time">${new Date().toLocaleTimeString()}</div>
+      </div>
+      <button class="notification-dismiss" aria-label="Cerrar">✕</button>
+    `;
+
+    // Dismiss button handler
+    const dismissBtn = notif.querySelector('.notification-dismiss');
+    dismissBtn.addEventListener('click', () => this.dismiss(notif));
+
+    // Manage stack limit
+    const currentChildren = Array.from(this.stackElement.children);
+    if (currentChildren.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
+      const oldest = currentChildren[0];
+      this.dismiss(oldest);
+    }
+
+    this.stackElement.appendChild(notif);
+
+    // Auto-dismiss after timeout
+    if (autoClose > 0) {
+      notif.timeoutId = setTimeout(() => {
+        if (notif.isConnected) this.dismiss(notif);
+      }, autoClose);
+    }
+
+    // Small vibration for critical errors? No, only visual.
+    return notif;
+  },
+
+  dismiss(notificationElement) {
+    if (!notificationElement || !notificationElement.isConnected) return;
+    if (notificationElement.timeoutId) clearTimeout(notificationElement.timeoutId);
+    notificationElement.classList.add('removing');
+    notificationElement.addEventListener('animationend', () => {
+      if (notificationElement.isConnected) notificationElement.remove();
+    }, { once: true });
+  },
+
+  clearAll() {
+    if (this.stackElement) {
+      Array.from(this.stackElement.children).forEach(child => this.dismiss(child));
+    }
+  }
+};
+
+// Helper to prevent XSS in notifications
+function escapeHtml(str) {
+  return str.replace(/[&<>]/g, function(m) {
+    if (m === '&') return '&amp;';
+    if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;';
+    return m;
+  });
+}
+
+// Global shortcut for external calls
+window.showNotification = (type, title, message, duration) => 
+  NotificationManager.show(type, title, message, duration);
+
+/* ═══════════════════════════════════════════════
    ESTADO GLOBAL
 ═══════════════════════════════════════════════ */
 const State = {
   positions: [],
   priceCache: {},
+  marketBonds: [],
   mepRate: null,
   activeType: 'ar',
   activeRange: 'ytd',
@@ -234,7 +344,6 @@ function renderLineChart() {
     history = history.filter(h => new Date(h.date) >= yearStart);
   }
 
-  // Fallback inteligente si no hay histórico suficiente
   if (history.length < 3) {
     const points = 30;
     let curr = State.processed.reduce((s, i) => s + i.valUSD, 0) * 0.85;
@@ -296,6 +405,109 @@ function renderLineChart() {
 }
 
 /* ═══════════════════════════════════════════════
+   SINCRONIZACIÓN DE MERCADO (con notificaciones)
+═══════════════════════════════════════════════ */
+async function fetchBondsMarketData() {
+  try {
+    const res = await fetch(API.BONDS_DATA);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+    const result = await res.json();
+    if (result.success && Array.isArray(result.data)) {
+      State.marketBonds = result.data;
+      
+      result.data.forEach(bond => {
+        const symbol = bond.symbol.toUpperCase();
+        State.priceCache[symbol] = {
+          price: bond.price,
+          change: parseFloat(bond.change) || 0,
+          source: 'Amygdalé API'
+        };
+      });
+      console.log(`[API] Sincronizados ${result.count} bonos en memoria.`);
+      NotificationManager.show('info', 'Mercado sincronizado', `${result.count} bonos actualizados desde Amygdalé API.`, 3000);
+    } else {
+      throw new Error('Formato de respuesta inválido');
+    }
+  } catch (e) {
+    console.error('[Security/Fetch Error] Fallo en sincronización de bonos:', e.message);
+    NotificationManager.show('error', 'Error de sincronización', `No se pudieron cargar los bonos: ${e.message}`, 6000);
+    State.marketBonds = [];
+  }
+}
+
+async function renderBondsInsightWidget() {
+  const container = $('bondsInsightContainer');
+  if (!container) return;
+
+  try {
+    const res = await fetch(API.BONDS_TOP_TIR);
+    if (!res.ok) throw new Error();
+    const result = await res.json();
+    
+    if (!result.success || !Array.isArray(result.data) || result.data.length === 0) {
+      container.innerHTML = '<div class="empty-row">Métricas de TIR no disponibles</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    const top5 = result.data.slice(0, 5);
+    
+    top5.forEach(bond => {
+      const row = document.createElement('div');
+      row.className = 'insight-row';
+      
+      const symbolSpan = document.createElement('span');
+      symbolSpan.className = 'insight-symbol';
+      symbolSpan.textContent = bond.symbol;
+      
+      const detailsSpan = document.createElement('span');
+      detailsSpan.className = 'insight-details';
+      detailsSpan.textContent = `u$s ${bond.price.toFixed(2)} | TIR: ${bond.tir.toFixed(1)}% | Paridad: ${bond.paridad.toFixed(1)}%`;
+      
+      row.appendChild(symbolSpan);
+      row.appendChild(detailsSpan);
+      container.appendChild(row);
+    });
+  } catch {
+    container.innerHTML = '<div class="error-msg">Error de conexión con el módulo de análisis</div>';
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   RIESGO DE CARTERA (ALERTAS AUTOMÁTICAS)
+═══════════════════════════════════════════════ */
+function checkPortfolioRisk(processed, totalVal) {
+  if (!processed.length || totalVal <= 0) return;
+  
+  // Concentration warning (>40%)
+  const highWeight = processed.find(item => (item.valUSD / totalVal) * 100 > 40);
+  if (highWeight) {
+    NotificationManager.show('warning', 'Riesgo de concentración', 
+      `${highWeight.pos.ticker} representa >40% de la cartera. Considere diversificar.`, 8000);
+  }
+  
+  // Daily loss alert (portfolio drop >3%)
+  const todayChangeWeighted = processed.reduce((acc, item) => {
+    const weight = item.valUSD / totalVal;
+    return acc + weight * item.info.change;
+  }, 0);
+  if (todayChangeWeighted < -3) {
+    NotificationManager.show('warning', 'Caída significativa', 
+      `Rendimiento diario: ${Format.pct(todayChangeWeighted)}. Revisar exposición.`, 7000);
+  }
+  
+  // Positive AI insight: if best performer >5%
+  const bestPerformer = processed.reduce((best, item) => 
+    item.info.change > best.change ? { ticker: item.pos.ticker, change: item.info.change } : best, 
+    { ticker: '', change: -Infinity });
+  if (bestPerformer.change > 5) {
+    NotificationManager.show('info', 'Oportunidad táctica', 
+      `${bestPerformer.ticker} +${bestPerformer.change.toFixed(2)}% hoy. Considere revisar fundamentales.`, 6000);
+  }
+}
+
+/* ═══════════════════════════════════════════════
    RENDER PRINCIPAL
 ═══════════════════════════════════════════════ */
 function renderAll() {
@@ -303,7 +515,7 @@ function renderAll() {
   const tbody = $('posTable');
 
   State.processed = State.positions.map(pos => {
-    const info = State.priceCache[pos.ticker] || { price: 0, change: 0 };
+    const info = State.priceCache[pos.ticker.toUpperCase()] || { price: 0, change: 0 };
     const holdings = pos.holdings || [];
     const totalQty = holdings.reduce((sum, h) => sum + h.qty, 0);
 
@@ -318,8 +530,6 @@ function renderAll() {
       : info.price * totalQty;
 
     const pnlUSD = currentValUSD - totalCostUSD;
-    
-    // ✅ PER corregido: threshold > 0.01 para evitar divisiones por casi-cero
     const per = totalCostUSD > 0.01 ? (pnlUSD / totalCostUSD) * 100 : 0;
     
     const ppcOriginal = totalQty > 0 
@@ -335,6 +545,9 @@ function renderAll() {
   renderPieChart(State.processed);
   renderLineChart();
   saveDailySnapshot(totalPortfolioUSD);
+  
+  // Risk & AI insights after each render
+  checkPortfolioRisk(State.processed, totalPortfolioUSD);
 
   if (State.processed.length === 0) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty-row">Agregá tu primera posición ↑</td></tr>';
@@ -382,28 +595,31 @@ async function fetchWithProxy(url) {
 }
 
 async function getPrice(ticker, type) {
+  const uppercaseTicker = ticker.toUpperCase();
   try {
-    // 1️⃣ Bonos Argentinos → BYMA
-    if (type === 'ar' && isArgentineBond(ticker)) {
-      const symbol = BOND_SYMBOLS[ticker.toUpperCase()];
-      const data = await fetchWithProxy(API.BYMA + symbol);
-      const quote = Array.isArray(data) ? data.find(q => q.symbol === symbol) : data;
-      if (quote?.last && !isNaN(quote.last)) {
-        return { price: parseFloat(quote.last), change: parseFloat(quote.varPct) || 0, source: 'BYMA' };
+    if (type === 'ar' && isArgentineBond(uppercaseTicker)) {
+      const symbol = BOND_SYMBOLS[uppercaseTicker] || uppercaseTicker;
+      let localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
+      
+      if (!localBond) {
+        await fetchBondsMarketData();
+        localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
+      }
+      
+      if (localBond) {
+        return { price: localBond.price, change: localBond.change || 0, source: 'Amygdalé API' };
       }
     }
 
-    // 2️⃣ Cripto → CoinGecko
     if (type === 'crypto') {
-      const id = CRYPTO_MAP[ticker] || ticker.toLowerCase();
+      const id = CRYPTO_MAP[uppercaseTicker] || ticker.toLowerCase();
       const data = await fetchWithProxy(`${API.COINGECKO}?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
       const coin = data[Object.keys(data)[0]];
       if (coin?.usd) return { price: coin.usd, change: coin.usd_24h_change || 0, source: 'CoinGecko' };
     }
 
-    // 3️⃣ Acciones Argentinas → Yahoo (.BA)
     if (type === 'ar') {
-      const data = await fetchWithProxy(`${API.YAHOO}${ticker}.BA?interval=1d&range=2d`);
+      const data = await fetchWithProxy(`${API.YAHOO}${uppercaseTicker}.BA?interval=1d&range=2d`);
       const meta = data.chart?.result?.[0]?.meta;
       if (meta?.regularMarketPrice) {
         return { 
@@ -414,8 +630,7 @@ async function getPrice(ticker, type) {
       }
     }
 
-    // 4️⃣ Acciones Globales → Yahoo directo
-    const data = await fetchWithProxy(`${API.YAHOO}${ticker}?interval=1d&range=2d`);
+    const data = await fetchWithProxy(`${API.YAHOO}${uppercaseTicker}?interval=1d&range=2d`);
     const meta = data.chart?.result?.[0]?.meta;
     if (meta?.regularMarketPrice) {
       return { 
@@ -428,20 +643,22 @@ async function getPrice(ticker, type) {
     return { price: 0, change: 0, source: 'N/A' };
   } catch (e) {
     console.warn(`⚠️ Error obteniendo ${ticker}:`, e.message);
+    NotificationManager.show('error', `Error cotización ${ticker}`, e.message, 5000);
     return { price: 0, change: 0, source: 'Error' };
   }
 }
 
 async function getPriceCached(ticker, type) {
-  const cached = PriceCache.get(ticker);
+  const uppercaseTicker = ticker.toUpperCase();
+  const cached = PriceCache.get(uppercaseTicker);
   if (cached) return cached;
-  const fresh = await getPrice(ticker, type);
-  if (fresh.price > 0) PriceCache.set(ticker, fresh);
+  const fresh = await getPrice(uppercaseTicker, type);
+  if (fresh.price > 0) PriceCache.set(uppercaseTicker, fresh);
   return fresh;
 }
 
 /* ═══════════════════════════════════════════════
-   FORMULARIO & EVENTOS
+   FORMULARIO & EVENTOS (con notificaciones)
 ═══════════════════════════════════════════════ */
 async function handleAdd(e) {
   if (e) e.preventDefault();
@@ -455,6 +672,7 @@ async function handleAdd(e) {
   if (!ticker || isNaN(qty) || isNaN(ppc) || qty <= 0 || ppc <= 0) {
     errorEl.textContent = 'Datos inválidos. Revisá cantidad y precio.';
     errorEl.style.display = 'block';
+    NotificationManager.show('error', 'Error al agregar', 'Cantidad o precio inválidos.', 4000);
     return;
   }
   errorEl.style.display = 'none';
@@ -476,32 +694,39 @@ async function handleAdd(e) {
   
   State.priceCache[ticker] = await getPriceCached(ticker, State.activeType);
   renderAll();
+  if ($('bondsInsightContainer')) await renderBondsInsightWidget();
+  
+  NotificationManager.show('success', 'Posición agregada', `${qty} ${ticker} añadido a la cartera.`, 4000);
 }
 
 /* ═══════════════════════════════════════════════
-   EXPORT / IMPORT JSON (Sin duplicados)
+   EXPORT / IMPORT JSON (con notificaciones)
 ═══════════════════════════════════════════════ */
 function exportPortfolio() {
-  const payload = {
-    version: '2.1',
-    exported: new Date().toISOString(),
-    positions: State.positions,
-    history: Storage.get(CONFIG.LS_HISTORY) || []
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `amygdale_backup_${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    const payload = {
+      version: '2.2',
+      exported: new Date().toISOString(),
+      positions: State.positions,
+      history: Storage.get(CONFIG.LS_HISTORY) || []
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `amygdale_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    NotificationManager.show('success', 'Exportación completa', 'Copia de seguridad generada correctamente.', 3500);
+  } catch (err) {
+    NotificationManager.show('error', 'Error al exportar', err.message, 5000);
+  }
 }
 
 function injectControls() {
   const container = $('controlsContainer');
-  if (!container) return;
+  if (!container || $('btnExport')) return;
   
-  // Input oculto para importar
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = '.json';
@@ -509,7 +734,6 @@ function injectControls() {
   fileInput.id = 'importInput';
   document.body.appendChild(fileInput);
 
-  // Contenedor de botones (solo UNA vez)
   const controls = document.createElement('div');
   controls.className = 'footer-controls';
   controls.innerHTML = `
@@ -518,7 +742,6 @@ function injectControls() {
   `;
   container.appendChild(controls);
 
-  // Event listeners
   $('btnExport').onclick = exportPortfolio;
   $('btnImport').onclick = () => $('importInput').click();
   
@@ -533,9 +756,14 @@ function injectControls() {
           State.positions = data.positions;
           Storage.set(CONFIG.LS_POSITIONS, State.positions);
           if (data.history) Storage.set(CONFIG.LS_HISTORY, data.history);
-          renderAll();
+          init();
+          NotificationManager.show('success', 'Importación exitosa', 'Portafolio restaurado desde backup.', 4000);
+        } else {
+          throw new Error('Archivo inválido');
         }
-      } catch { console.error('Import error'); }
+      } catch (err) {
+        NotificationManager.show('error', 'Error de importación', 'El archivo no es válido o está corrupto.', 6000);
+      }
     };
     reader.readAsText(file);
   };
@@ -546,7 +774,8 @@ function injectControls() {
 ═══════════════════════════════════════════════ */
 async function init() {
   updateClocks();
-  setInterval(updateClocks, 1000);
+  if (window.clockInterval) clearInterval(window.clockInterval);
+  window.clockInterval = setInterval(updateClocks, 1000);
   
   State.positions = Storage.get(CONFIG.LS_POSITIONS) || [];
 
@@ -556,21 +785,27 @@ async function init() {
     if ($('sourceRow')) {
       $('sourceRow').textContent = `Dólar MEP: $${State.mepRate.toLocaleString('es-AR')}`;
     }
+    NotificationManager.show('info', 'Tipo de cambio actualizado', `MEP: $${State.mepRate.toLocaleString('es-AR')}`, 4000);
   } catch {
     State.mepRate = CONFIG.DEFAULT_MEP;
+    NotificationManager.show('error', 'Error MEP', 'Usando valor por defecto.', 5000);
   }
+
+  await fetchBondsMarketData();
 
   if (State.positions.length > 0) {
     const results = await Promise.all(State.positions.map(p => getPriceCached(p.ticker, p.type)));
-    State.positions.forEach((p, i) => State.priceCache[p.ticker] = results[i]);
+    State.positions.forEach((p, i) => State.priceCache[p.ticker.toUpperCase()] = results[i]);
   }
 
   renderAll();
   injectControls();
+  if ($('bondsInsightContainer')) {
+    await renderBondsInsightWidget();
+  }
 
   $('addBtn').onclick = handleAdd;
 
-  // Toggle de tipos de activo
   document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
@@ -579,7 +814,6 @@ async function init() {
     });
   });
 
-  // Toggle de rango gráfico
   document.querySelectorAll('.range-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
@@ -589,15 +823,21 @@ async function init() {
     });
   });
 
-  // Eliminar posición
   window.deletePos = (index) => {
+    const removed = State.positions[index];
     State.positions.splice(index, 1);
     Storage.set(CONFIG.LS_POSITIONS, State.positions);
     renderAll();
+    if ($('bondsInsightContainer')) renderBondsInsightWidget();
+    NotificationManager.show('info', 'Posición eliminada', `${removed.ticker} removido de la cartera.`, 3500);
   };
+  
+  // Final ready notification
+  NotificationManager.show('info', 'Sistema listo', 'Amygdalé monitoreando mercados y riesgos.', 3000);
 }
 
-// Boot
+// Initialize NotificationManager and start app
+NotificationManager.init();
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
