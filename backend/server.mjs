@@ -13,7 +13,7 @@ const fastify = Fastify({
   logger: true
 })
 
-// Habilitar CORS
+// Habilitar CORS para evitar bloqueos del navegador
 await fastify.register(cors, {
   origin: true
 })
@@ -26,15 +26,15 @@ await fastify.register(fastifyStatic, {
 
 /*
 |--------------------------------------------------------------------------
-| CONFIG
+| CONFIGURACIÓN
 |--------------------------------------------------------------------------
 */
 const PORT = process.env.PORT || 3000
-const CACHE_DURATION = 60 * 1000
+const CACHE_DURATION = 60 * 1000 // Cache de bonos por 1 minuto
 
 /*
 |--------------------------------------------------------------------------
-| CACHE
+| CACHE EN MEMORIA (Para Rava)
 |--------------------------------------------------------------------------
 */
 let cache = {
@@ -44,7 +44,7 @@ let cache = {
 
 /*
 |--------------------------------------------------------------------------
-| HELPERS
+| HELPERS / NORMALIZACIÓN
 |--------------------------------------------------------------------------
 */
 function normalizeBond(bond) {
@@ -97,7 +97,7 @@ async function getBonds() {
 
 /*
 |--------------------------------------------------------------------------
-| ROUTES (FRONTEND & API)
+| RUTAS DEL FRONTEND Y ENDPOINTS DE LA API
 |--------------------------------------------------------------------------
 */
 
@@ -106,16 +106,50 @@ fastify.get('/', async (request, reply) => {
   return reply.sendFile('index.html')
 })
 
-// API Status
+// PROXY ROUTE: Soluciona los errores 404 y decodifica las llamadas externas
+fastify.get('/api/proxy', async (request, reply) => {
+  const { url } = request.query
+
+  if (!url) {
+    reply.code(400)
+    return { success: false, error: 'Falta el parámetro URL en la consulta' }
+  }
+
+  try {
+    // Decodifica los caracteres especiales (%3A, %2F, ?, =) traídos desde script.js
+    const cleanUrl = decodeURIComponent(url)
+    request.log.info(`Proxying request to: ${cleanUrl}`)
+
+    const response = await axios.get(cleanUrl, {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      },
+      timeout: 7000 // Tiempo límite de espera para APIs externas lentas
+    })
+    
+    return response.data
+  } catch (error) {
+    request.log.error(`Error en Proxy para la URL: ${url} ->`, error.message)
+    reply.code(error.response?.status || 500)
+    return { 
+      success: false, 
+      error: 'Error al consultar el recurso externo a través del proxy',
+      details: error.message 
+    }
+  }
+})
+
+// Estado de la API
 fastify.get('/api/status', async () => {
   return {
     success: true,
-    service: 'Rava Bonds API',
+    service: 'Amygdalé Core API',
     timestamp: new Date().toISOString()
   }
 })
 
-// Get all bonds
+// Obtener todos los bonos procesados
 fastify.get('/api/bonds', async () => {
   const bonds = await getBonds()
   return {
@@ -126,7 +160,7 @@ fastify.get('/api/bonds', async () => {
   }
 })
 
-// Get bond by symbol
+// Obtener un bono específico por símbolo (ej: AL30)
 fastify.get('/api/bonds/:symbol', async (request, reply) => {
   const { symbol } = request.params
   const bonds = await getBonds()
@@ -139,7 +173,7 @@ fastify.get('/api/bonds/:symbol', async (request, reply) => {
   return { success: true, data: bond }
 })
 
-// Search bonds
+// Buscador de bonos
 fastify.get('/api/search/:query', async (request) => {
   const { query } = request.params
   const bonds = await getBonds()
@@ -150,7 +184,7 @@ fastify.get('/api/search/:query', async (request) => {
   return { success: true, count: results.length, data: results }
 })
 
-// Top bonds by TIR
+// Top 20 bonos por TIR
 fastify.get('/api/top/tir', async () => {
   const bonds = await getBonds()
   const sorted = [...bonds]
@@ -160,7 +194,7 @@ fastify.get('/api/top/tir', async () => {
   return { success: true, count: sorted.length, data: sorted }
 })
 
-// Top bonds by parity
+// Top 20 bonos por Paridad
 fastify.get('/api/top/paridad', async () => {
   const bonds = await getBonds()
   const sorted = [...bonds]
@@ -170,7 +204,7 @@ fastify.get('/api/top/paridad', async () => {
   return { success: true, count: sorted.length, data: sorted }
 })
 
-// Clear cache
+// Limpiar la caché manualmente si fuera necesario
 fastify.post('/api/cache/clear', async () => {
   cache = { data: null, updatedAt: 0 }
   return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
@@ -178,16 +212,16 @@ fastify.post('/api/cache/clear', async () => {
 
 /*
 |--------------------------------------------------------------------------
-| START SERVER
+| INICIO DEL SERVIDOR
 |--------------------------------------------------------------------------
 */
 const start = async () => {
   try {
     await fastify.listen({
       port: Number(PORT),
-      host: '0.0.0.0'
+      host: '0.0.0.0' // Clave para que Render pueda ruteat el tráfico externo
     })
-    console.log(`🚀 Amygdalé API & Dashboard running on port ${PORT}`)
+    console.log(`🚀 Amygdalé Dashboard unificado corriendo en puerto ${PORT}`)
   } catch (err) {
     fastify.log.error(err)
     process.exit(1)
