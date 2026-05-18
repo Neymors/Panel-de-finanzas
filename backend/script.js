@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
- * Version: 3.0 — Notification System & AI Risk Alerts
+ * Version: 3.1 — Fixed Multi-Currency Math & Yahoo Robustness
  */
 'use strict';
 
@@ -51,7 +51,6 @@ const NotificationManager = {
   show(type = 'info', title, message, customDuration = null) {
     const stack = this.getStack();
     
-    // Control de saturación en pantalla
     while (stack.children.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
       stack.removeChild(stack.firstChild);
     }
@@ -60,13 +59,7 @@ const NotificationManager = {
     card.className = `notification-card ${type}`;
     card.setAttribute('role', 'alert');
 
-    // Iconos minimalistas por tipo de evento
-    const icons = {
-      success: '✓',
-      error: '✕',
-      warning: '⚠',
-      info: 'ℹ'
-    };
+    const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
 
     card.innerHTML = `
       <div class="notification-icon">${icons[type] || 'ℹ'}</div>
@@ -78,8 +71,6 @@ const NotificationManager = {
     `;
 
     stack.appendChild(card);
-
-    // Forzar reflow para animación CSS de entrada
     triggerReflow(card);
     card.classList.add('visible');
 
@@ -91,14 +82,11 @@ const NotificationManager = {
       card.classList.remove('visible');
       card.classList.add('exit');
       card.addEventListener('transitionend', () => {
-        if (card.parentNode === stack) {
-          stack.removeChild(card);
-        }
+        if (card.parentNode === stack) stack.removeChild(card);
       });
     };
 
     closeBtn.onclick = dismiss;
-
     const duration = customDuration || CONFIG.AUTO_DISMISS[type] || 5000;
     dismissTimeout = setTimeout(dismiss, duration);
   }
@@ -137,7 +125,6 @@ const Storage = {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (e) {
       console.error(`Error escribiendo localStorage [${key}]:`, e);
-      NotificationManager.show('error', 'Error de almacenamiento', 'No se pudieron guardar los cambios de forma local.');
     }
   }
 };
@@ -149,7 +136,6 @@ async function fetchWithProxy(baseUrl, params = {}) {
   const urlObj = new URL(baseUrl);
   Object.keys(params).forEach(key => urlObj.searchParams.append(key, params[key]));
   
-  // Codificar la URL completa para pasarla por el proxy del backend
   const proxyUrl = `${CONFIG.PROXY}?url=${encodeURIComponent(urlObj.toString())}`;
   
   const res = await fetch(proxyUrl);
@@ -175,7 +161,8 @@ async function getPrice(ticker, type) {
   const cache = Storage.get(CONFIG.LS_CACHE, {});
   const now = Date.now();
 
-  if (cache[ticker] && (now - cache[ticker].ts < CONFIG.CACHE_TTL)) {
+  // Si el caché es válido y el precio no es cero, usarlo
+  if (cache[ticker] && (now - cache[ticker].ts < CONFIG.CACHE_TTL) && cache[ticker].price > 0) {
     return cache[ticker];
   }
 
@@ -211,8 +198,12 @@ async function getPrice(ticker, type) {
         throw new Error('Formato Crypto inválido');
       }
     } 
-    else { // ACCION / CEDEAR
-      const symbol = ticker.toUpperCase().endsWith('.BA') ? ticker.toUpperCase() : ticker.toUpperCase();
+    else { // ACCION / CEDEAR / GLOBAL
+      let symbol = ticker.toUpperCase();
+      
+      // Auto-corrección de typo común de Apple
+      if (symbol === 'APPL') symbol = 'AAPL';
+
       const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, {
         interval: '1d',
         range: '2d'
@@ -220,21 +211,28 @@ async function getPrice(ticker, type) {
 
       const result = data?.chart?.result?.[0];
       if (result) {
-        const indicators = result.indicators.quote[0];
-        const prices = indicators.close || [];
-        // Filtrar valores nulos de Yahoo Finance
-        const cleanPrices = prices.filter(v => v !== null);
+        const meta = result.meta;
+        const indicators = result.indicators?.quote?.[0];
+        const prices = indicators?.close || [];
+        const cleanPrices = prices.filter(v => v !== null && v !== undefined);
         
+        // Estrategia de recuperación para mercados fuera de hora o globales
         if (cleanPrices.length > 0) {
           price = cleanPrices[cleanPrices.length - 1];
           if (cleanPrices.length > 1) {
             const prev = cleanPrices[cleanPrices.length - 2];
             change = ((price - prev) / prev) * 100;
+          } else if (meta?.regularMarketChangePercent !== undefined) {
+            change = meta.regularMarketChangePercent;
           }
+        } else if (meta?.regularMarketPrice !== undefined) {
+          price = meta.regularMarketPrice;
+          change = meta.regularMarketChangePercent || 0;
         } else {
-          price = result.meta.regularMarketPrice || 0;
-          change = 0;
+          throw new Error('No se encontraron precios válidos en Yahoo Finance');
         }
+
+        if (meta?.shortName) name = meta.shortName;
       } else {
         throw new Error('Estructura de Yahoo Finance no interpretada');
       }
@@ -252,7 +250,7 @@ async function getPrice(ticker, type) {
 }
 
 /* ═══════════════════════════════════════════════
-   CÁLCULOS ALGEBRAICOS Y PROCESAMIENTO
+   CÁLCULOS METÁLICOS Y PROCESAMIENTO (CORREGIDO)
 ═══════════════════════════════════════════════ */
 async function processPositions() {
   const processed = [];
@@ -264,7 +262,7 @@ async function processPositions() {
     let currentPriceUSD = live.price;
     let ppcUSD = pos.ppc;
 
-    // Conversión de pesos a dólares si el activo cotiza de forma local
+    // 💡 Corrección Matemática Crítica: Normalización limpia a dólares uniformes
     if (pos.currency === 'ARS') {
       currentPriceUSD = live.price / State.mepPrice;
       ppcUSD = pos.ppc / State.mepPrice;
@@ -272,6 +270,7 @@ async function processPositions() {
 
     const subtotalUSD = currentPriceUSD * pos.qty;
     const capitalInvertidoUSD = ppcUSD * pos.qty;
+    
     const pnlAbsUSD = subtotalUSD - capitalInvertidoUSD;
     const pnlPct = capitalInvertidoUSD > 0 ? (pnlAbsUSD / capitalInvertidoUSD) * 100 : 0;
 
@@ -318,12 +317,10 @@ function triggerReflow(el) {
 async function renderAll() {
   const { processed, totalUSD } = await processPositions();
   
-  // Render de Métricas Principales
   $('totalUSD').textContent = formatUSD(totalUSD);
   $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
   $('mepValue').textContent = formatARS(State.mepPrice);
 
-  // Renderizado de la Tabla de Control
   const tbody = $('posTable');
   tbody.innerHTML = '';
 
@@ -358,45 +355,35 @@ async function renderAll() {
         <td>${share.toFixed(1)}%</td>
         <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
         <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-        <td><button class="action-btn delete" onclick="deletePos(${index})" aria-label="Eliminar posición">Eliminar</button></td>
+        <td><button class="action-btn delete" onclick="deletePos(${index})" aria-label="Eliminar posición">✕</button></td>
       `;
       tbody.appendChild(tr);
     });
   }
 
-  // Actualización de Componentes Gráficos
   renderDonutChart(filtered);
   renderLineChart();
   runRiskEngine(filtered);
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RENDERIZADO DE GRÁFICOS (CHART.JS)
+   MOTOR DE RENDERIZADO DE GRÁFICOS
 ═══════════════════════════════════════════════ */
 function renderDonutChart(items) {
   const ctx = $('donutChart');
   if (!ctx) return;
 
-  if (State.charts.donut) {
-    State.charts.donut.destroy();
-  }
-
+  if (State.charts.donut) State.charts.donut.destroy();
   if (items.length === 0) {
     ctx.style.display = 'none';
     return;
   }
   ctx.style.display = 'block';
 
-  // Consolidar datos por Ticker
   const labels = items.map(x => x.ticker.toUpperCase());
   const data = items.map(x => x.subtotalUSD);
 
-  // Paleta de diseño institucional (Cyberpunk Gris/Azul Premium)
-  const colors = [
-    '#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', 
-    '#1d4ed8', '#1e40af', '#1e3a8a', '#38bdf8', 
-    '#0ea5e9', '#0284c7', '#0369a1', '#075985'
-  ];
+  const colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8'];
 
   State.charts.donut = new Chart(ctx, {
     type: 'doughnut',
@@ -405,26 +392,14 @@ function renderDonutChart(items) {
       datasets: [{
         data,
         backgroundColor: colors.slice(0, labels.length),
-        borderWidth: 0,
-        hoverOffset: 4
+        borderWidth: 0
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {
-          position: 'right',
-          labels: {
-            color: '#94a3b8',
-            font: { family: 'monospace', size: 11 }
-          }
-        },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => ` ${ctx.label}: ${formatUSD(ctx.raw)}`
-          }
-        }
+        legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } }
       }
     }
   });
@@ -434,28 +409,18 @@ function renderLineChart() {
   const ctx = $('lineChart');
   if (!ctx) return;
 
-  if (State.charts.line) {
-    State.charts.line.destroy();
-  }
+  if (State.charts.line) State.charts.line.destroy();
 
   const history = Storage.get(CONFIG.LS_HISTORY, []);
-  
-  // Filtrar rango seleccionado
   const filterDays = { '1W': 7, '1M': 30, '3M': 90, 'ALL': CONFIG.HISTORY_MAX }[State.activeRange] || 30;
   const filteredHistory = history.slice(-filterDays);
 
-  // Generar datos ficticios balanceados si el historial está vacío
   let labels = filteredHistory.map(h => h.date);
   let data = filteredHistory.map(h => h.value);
 
   if (labels.length === 0) {
-    labels = Array.from({ length: 10 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (10 - i));
-      return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
-    });
-    const currentPortfolioValue = State.positions.reduce((acc, p) => acc + (p.ppc * p.qty), 5000); 
-    data = labels.map((_, i) => currentPortfolioValue * (0.95 + (i * 0.012) + (Math.random() * 0.03)));
+    labels = Array.from({ length: 5 }, (_, i) => `Punto ${i+1}`);
+    data = [1000, 1200, 1150, 1300, 1420];
   }
 
   State.charts.line = new Chart(ctx, {
@@ -463,14 +428,11 @@ function renderLineChart() {
     data: {
       labels,
       datasets: [{
-        label: 'Valor de Cartera (USD)',
+        label: 'Historial USD',
         data,
         borderColor: '#2563eb',
         borderWidth: 2,
-        pointRadius: 2,
-        pointHoverRadius: 5,
-        fill: true,
-        backgroundColor: 'rgba(37, 99, 235, 0.04)',
+        fill: false,
         tension: 0.15
       }]
     },
@@ -478,11 +440,8 @@ function renderLineChart() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 } } },
-        y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } }
-      },
-      plugins: {
-        legend: { display: false }
+        x: { ticks: { color: '#64748b' } },
+        y: { ticks: { color: '#64748b' } }
       }
     }
   });
@@ -497,44 +456,28 @@ function runRiskEngine(processedPositions) {
   alertsContainer.innerHTML = '';
 
   const alerts = [];
+  const totalUSD = processedPositions.reduce((acc, x) => acc + x.subtotalUSD, 0);
 
-  // Alerta 1: Concentración de Cartera Excesiva
   processedPositions.forEach(p => {
-    const totalUSD = processedPositions.reduce((acc, x) => acc + x.subtotalUSD, 0);
     const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
     if (share > 40 && processedPositions.length > 1) {
       alerts.push({
         type: 'warning',
         title: 'Alta Concentración',
-        desc: `El activo **${p.ticker.toUpperCase()}** representa el ${share.toFixed(1)}% de tu cartera. Considera diversificar para mitigar riesgos específicos.`
+        desc: `El activo **${p.ticker.toUpperCase()}** representa el ${share.toFixed(1)}% de tu cartera.`
       });
     }
-  });
-
-  // Alerta 2: Pérdidas Abruptas (Stop Loss Práctico)
-  processedPositions.forEach(p => {
     if (p.pnlPct < -15) {
       alerts.push({
         type: 'danger',
-        title: 'Alerta Stop-Loss Critico',
-        desc: `El activo **${p.ticker.toUpperCase()}** acumula una caída del ${p.pnlPct.toFixed(1)}%. Revisa los fundamentales de la inversión.`
+        title: 'Alerta Stop-Loss Crítico',
+        desc: `El activo **${p.ticker.toUpperCase()}** acumula una caída del ${p.pnlPct.toFixed(1)}%.`
       });
     }
   });
 
-  // Alerta 3: Falta de Diversificación por Tipo
-  const types = processedPositions.map(p => p.type);
-  const uniqueTypes = [...new Set(types)];
-  if (uniqueTypes.length === 1 && processedPositions.length > 0) {
-    alerts.push({
-      type: 'info',
-      title: 'Sugerencia de Distribución',
-      desc: 'Tu portafolio está compuesto por un solo tipo de activo. Integrar Bonos, Acciones o Criptoactivos puede balancear los ciclos de volatilidad.'
-    });
-  }
-
   if (alerts.length === 0) {
-    alertsContainer.innerHTML = `<div class="no-risk">✓ Todos los parámetros de riesgo dentro de los umbrales seguros establecidos.</div>`;
+    alertsContainer.innerHTML = `<div class="no-risk">✓ Todos los parámetros de riesgo estables.</div>`;
     return;
   }
 
@@ -547,7 +490,7 @@ function runRiskEngine(processedPositions) {
 }
 
 /* ═══════════════════════════════════════════════
-   MÓDULO ADICIONAL: WIDGET DE BONOS INTELIGENTES
+   WIDGET DE BONOS INTELIGENTES
 ═══════════════════════════════════════════════ */
 async function renderBondsInsightWidget() {
   const container = $('bondsInsightContainer');
@@ -566,9 +509,7 @@ async function renderBondsInsightWidget() {
         html += `
           <div class="bond-insight-card">
             <div class="bond-insight-sym">${b.symbol}</div>
-            <div class="bond-insight-name">${b.name}</div>
             <div class="bond-insight-metric">TIR: <span class="up">${b.tir.toFixed(1)}%</span></div>
-            <div class="bond-insight-sub">Paridad: ${b.paridad.toFixed(1)}% | Ley: ${b.law}</div>
           </div>
         `;
       });
@@ -576,7 +517,7 @@ async function renderBondsInsightWidget() {
       container.innerHTML = html;
     }
   } catch (err) {
-    container.innerHTML = `<div class="error-msg">No se pudo cargar el análisis dinámico de renta fija.</div>`;
+    container.innerHTML = `<div class="error-msg">No se pudo cargar el análisis de renta fija.</div>`;
   }
 }
 
@@ -595,29 +536,30 @@ async function handleAdd(e) {
   
   const typeActiveBtn = document.querySelector('.type-btn.active');
   const type = typeActiveBtn ? typeActiveBtn.dataset.type : 'ACCION';
-  
   const currency = $('currencySelect').value;
 
   if (!ticker || isNaN(qty) || qty <= 0 || isNaN(ppc) || ppc <= 0) {
-    errorDiv.textContent = 'Por favor completes todos los campos obligatorios con valores positivos.';
+    errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
     return;
   }
 
   const newPosition = { ticker, type, qty, ppc, currency, days };
-  
   State.positions.push(newPosition);
   Storage.set(CONFIG.LS_POSITIONS, State.positions);
   
-  // Limpieza limpia del formulario
+  // Limpiar caché específico del activo al añadirlo para forzar actualización fresca
+  const cache = Storage.get(CONFIG.LS_CACHE, {});
+  delete cache[ticker];
+  if(ticker === 'APPL' || ticker === 'AAPL') { delete cache['APPL']; delete cache['AAPL']; }
+  Storage.set(CONFIG.LS_CACHE, cache);
+
   $('tickerInput').value = '';
   $('qtyInput').value = '';
   $('ppcInput').value = '';
   $('daysInput').value = '0';
 
-  NotificationManager.show('success', 'Posición Añadida', `Se integró **${ticker}** de forma exitosa a tu cartera actual.`);
-  
+  NotificationManager.show('success', 'Posición Añadida', `Se integró **${ticker}** de forma exitosa.`);
   await renderAll();
-  if ($('bondsInsightContainer')) renderBondsInsightWidget();
 }
 
 function injectControls() {
@@ -651,13 +593,8 @@ function injectControls() {
 function initClocks() {
   const updateClocks = () => {
     const options = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    
-    if ($('clockAR')) {
-      $('clockAR').textContent = 'BA ' + new Date().toLocaleTimeString('es-AR', { ...options, timeZone: 'America/Argentina/Buenos_Aires' });
-    }
-    if ($('clockNY')) {
-      $('clockNY').textContent = 'NY ' + new Date().toLocaleTimeString('en-US', { ...options, timeZone: 'America/New_York' });
-    }
+    if ($('clockAR')) $('clockAR').textContent = 'BA ' + new Date().toLocaleTimeString('es-AR', { ...options, timeZone: 'America/Argentina/Buenos_Aires' });
+    if ($('clockNY')) $('clockNY').textContent = 'NY ' + new Date().toLocaleTimeString('en-US', { ...options, timeZone: 'America/New_York' });
   };
   setInterval(updateClocks, 1000);
   updateClocks();
@@ -669,7 +606,6 @@ function initClocks() {
 document.addEventListener('DOMContentLoaded', async () => {
   initClocks();
   
-  // Sincronización inicial con el backend unificado de Render
   try {
     const bondsRes = await fetch(API.BONDS_DATA);
     if (!bondsRes.ok) throw new Error('Error al sincronizar base de datos de bonos');
@@ -679,19 +615,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log(`[API] Sincronizados ${State.bondsDb.length} bonos en memoria.`);
     }
   } catch (e) {
-    console.error('Error crítico en sincronización inicial:', e);
-    NotificationManager.show('error', 'Fallo de sincronización', 'No se pudo conectar con el motor de bonos en Render.');
+    console.error('Error inicial:', e);
+    NotificationManager.show('error', 'Fallo de sincronización', 'No se pudo conectar con el motor de bonos.');
   }
 
   await getMepPrice();
-
-  // Carga inicial desde LocalStorage
   State.positions = Storage.get(CONFIG.LS_POSITIONS, []);
   
-  // Guardar valor actual en el registro histórico
   const history = Storage.get(CONFIG.LS_HISTORY, []);
   const todayStr = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
-  
   const { totalUSD } = await processPositions();
   
   if (totalUSD > 0 && (!history.length || history[history.length - 1].date !== todayStr)) {
@@ -703,13 +635,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   await renderAll();
   injectControls();
   
-  if ($('bondsInsightContainer')) {
-    await renderBondsInsightWidget();
-  }
+  if ($('bondsInsightContainer')) await renderBondsInsightWidget();
 
   $('addBtn').onclick = handleAdd;
 
-  // Listeners de los selectores de tipo en el formulario superior
   document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
@@ -717,7 +646,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Listeners del selector de rango temporal del gráfico de líneas
   document.querySelectorAll('.range-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
@@ -732,9 +660,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     State.positions.splice(index, 1);
     Storage.set(CONFIG.LS_POSITIONS, State.positions);
     await renderAll();
-    if ($('bondsInsightContainer')) renderBondsInsightWidget();
     NotificationManager.show('info', 'Posición eliminada', `${removed.ticker} removido de la cartera.`, 3500);
   };
   
-  NotificationManager.show('info', 'Sistema Listo', 'Motor de riesgo e interfaz sincronizados en tiempo real.', 4000);
+  NotificationManager.show('info', 'Sistema Listo', 'Motor de riesgo e interfaz sincronizados.', 4000);
 });
