@@ -31,7 +31,6 @@ await fastify.register(fastifyStatic, {
 */
 const PORT = process.env.PORT || 3000
 const CACHE_DURATION = 60 * 1000 // Cache de bonos por 1 minuto
-const PROXY_TIMEOUT = 15000 // ↑ Timeout aumentado para Yahoo (15s)
 
 /*
 |--------------------------------------------------------------------------
@@ -84,47 +83,16 @@ async function getBonds() {
   if (cache.data && now - cache.updatedAt < CACHE_DURATION) {
     return cache.data
   }
+
   console.log('Fetching bonds from Rava...')
   const rawBonds = await fetchBondsFromRava()
   const normalized = rawBonds.map(normalizeBond)
+
   cache = {
     data: normalized,
     updatedAt: now
   }
   return normalized
-}
-
-/*
-|--------------------------------------------------------------------------
-| HEADERS PARA ENGÑAR A YAHOO FINANCE (Browser Simulation)
-|--------------------------------------------------------------------------
-*/
-const YAHOO_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Connection': 'keep-alive',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-site',
-  'Cache-Control': 'no-cache',
-  'Pragma': 'no-cache',
-  'Referer': 'https://finance.yahoo.com/'
-}
-
-/*
-|--------------------------------------------------------------------------
-| VALIDADOR DE RESPUESTA YAHOO FINANCE
-|--------------------------------------------------------------------------
-*/
-function isValidYahooResponse(data) {
-  // Estructura esperada: data.chart.result[0].meta.regularMarketPrice
-  return (
-    data?.chart?.result?.[0]?.meta?.regularMarketPrice !== undefined &&
-    data?.chart?.result?.[0]?.meta?.regularMarketPrice !== null &&
-    data?.chart?.result?.[0]?.meta?.regularMarketPrice > 0
-  )
 }
 
 /*
@@ -138,10 +106,10 @@ fastify.get('/', async (request, reply) => {
   return reply.sendFile('index.html')
 })
 
-// 🔧 PROXY ROUTE MEJORADO: Manejo robusto de Yahoo Finance y otras APIs
+// PROXY ROUTE: Soluciona los errores 404 y decodifica las llamadas externas
 fastify.get('/api/proxy', async (request, reply) => {
   const { url } = request.query
-  
+
   if (!url) {
     reply.code(400)
     return { success: false, error: 'Falta el parámetro URL en la consulta' }
@@ -152,84 +120,22 @@ fastify.get('/api/proxy', async (request, reply) => {
     const cleanUrl = decodeURIComponent(url)
     request.log.info(`Proxying request to: ${cleanUrl}`)
 
-    // Detectar si es Yahoo Finance para aplicar headers especiales
-    const isYahoo = cleanUrl.includes('query1.finance.yahoo.com')
-    const headers = isYahoo ? YAHOO_HEADERS : { 
-      'User-Agent': 'Mozilla/5.0',
-      'Accept': 'application/json'
-    }
-
     const response = await axios.get(cleanUrl, {
-      headers,
-      timeout: PROXY_TIMEOUT, // ↑ 15 segundos para Yahoo
-      validateStatus: (status) => status < 500, // No tirar error en 4xx, manejar manualmente
-      responseType: 'json',
-      maxRedirects: 5
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      },
+      timeout: 7000 // Tiempo límite de espera para APIs externas lentas
     })
-
-    // 🛡️ Validación específica para Yahoo Finance
-    if (isYahoo) {
-      if (response.status !== 200) {
-        request.log.warn(`Yahoo returned status ${response.status}`)
-        throw new Error(`Yahoo Finance responded with status ${response.status}`)
-      }
-      
-      if (!isValidYahooResponse(response.data)) {
-        request.log.warn(`Yahoo response structure invalid: ${JSON.stringify(response.data).slice(0, 200)}`)
-        
-        // Debug: loguear si Yahoo devolvió HTML de error
-        if (typeof response.data === 'string' || response.data?.chart?.result === null) {
-          throw new Error('Yahoo Finance bloqueó la solicitud o devolvió formato inválido')
-        }
-        throw new Error('Formato de respuesta de Yahoo no reconocido')
-      }
-      
-      request.log.info('Yahoo response validated successfully')
-    }
-
+    
     return response.data
-
   } catch (error) {
-    request.log.error(`Proxy error for URL: ${url}`, {
-      message: error.message,
-      code: error.code,
-      status: error.response?.status
-    })
-
-    // 🎯 Manejo específico de errores para el frontend
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-      reply.code(504)
-      return {
-        success: false,
-        error: 'Timeout al consultar el servicio externo',
-        details: 'La solicitud tardó más de lo esperado. Intentá nuevamente.'
-      }
-    }
-    
-    if (error.response?.status === 429) {
-      reply.code(429)
-      return {
-        success: false,
-        error: 'Límite de solicitudes alcanzado',
-        details: 'Demasiadas peticiones. Esperá unos segundos antes de reintentar.'
-      }
-    }
-    
-    if (error.response?.status === 401 || error.response?.status === 403) {
-      reply.code(403)
-      return {
-        success: false,
-        error: 'Acceso denegado por el servicio externo',
-        details: 'El servicio bloqueó esta solicitud. Podés intentar más tarde.'
-      }
-    }
-
-    // Error genérico
-    reply.code(error.response?.status || 502)
-    return {
-      success: false,
-      error: 'Error al consultar el recurso externo',
-      details: error.message || 'Error desconocido'
+    request.log.error(`Error en Proxy para la URL: ${url} ->`, error.message)
+    reply.code(error.response?.status || 500)
+    return { 
+      success: false, 
+      error: 'Error al consultar el recurso externo a través del proxy',
+      details: error.message 
     }
   }
 })
@@ -259,12 +165,11 @@ fastify.get('/api/bonds/:symbol', async (request, reply) => {
   const { symbol } = request.params
   const bonds = await getBonds()
   const bond = bonds.find((b) => b.symbol.toUpperCase() === symbol.toUpperCase())
-  
+
   if (!bond) {
     reply.code(404)
     return { success: false, error: 'Bond not found' }
   }
-  
   return { success: true, data: bond }
 })
 
@@ -302,26 +207,17 @@ fastify.get('/api/top/paridad', async () => {
 // Limpiar la caché manualmente si fuera necesario
 fastify.post('/api/cache/clear', async () => {
   cache = { data: null, updatedAt: 0 }
-  return { 
-    success: true, 
-    message: 'Cache cleared', 
-    timestamp: new Date().toISOString() 
-  }
+  return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
 })
 
-/*
-|--------------------------------------------------------------------------
-| INICIO DEL SERVIDOR
-|--------------------------------------------------------------------------
-*/
+/* INICIO DEL SERVIDOR */
 const start = async () => {
   try {
     await fastify.listen({
       port: Number(PORT),
-      host: '0.0.0.0' // Clave para que Render pueda rutear el tráfico externo
+      host: '0.0.0.0' // Clave para que Render pueda ruteat el tráfico externo
     })
-    console.log(`🚀 Amygdalé Dashboard corriendo en puerto ${PORT}`)
-    console.log(`📡 Proxy endpoint: http://localhost:${PORT}/api/proxy?url=...`)
+    console.log(`🚀 Amygdalé Dashboard unificado corriendo en puerto ${PORT}`)
   } catch (err) {
     fastify.log.error(err)
     process.exit(1)

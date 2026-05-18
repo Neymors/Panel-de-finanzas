@@ -1,12 +1,12 @@
 /**
-Amygdalé — Financial Dashboard & Risk Control
-Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
-Version: 3.1 — Robust Yahoo Fallback & Retry Logic
-*/
+ * Amygdalé — Financial Dashboard & Risk Control
+ * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
+ * Version: 3.0 — Notification System & AI Risk Alerts
+ */
 'use strict';
 
 /* ═══════════════════════════════════════════════
-CONFIGURACIÓN Y CONSTANTES
+   CONFIGURACIÓN Y CONSTANTES
 ═══════════════════════════════════════════════ */
 const CONFIG = {
   PROXY: '/api/proxy',
@@ -46,25 +46,40 @@ const CRYPTO_MAP = {
 };
 
 /* ═══════════════════════════════════════════════
-NOTIFICATION SYSTEM (Institutional Overlay)
+   NOTIFICATION SYSTEM (Institutional Overlay)
 ═══════════════════════════════════════════════ */
 const NotificationManager = {
   stackElement: null,
+  queue: [],
+  activeCount: 0,
+
   init() {
     this.stackElement = document.getElementById('notification-stack');
-    if (!this.stackElement) console.warn('Notification stack container missing');
+    if (!this.stackElement) {
+      console.warn('Notification stack container missing');
+      return;
+    }
   },
+
   show(type, title, message, duration = null) {
     if (!this.stackElement) this.init();
     if (!this.stackElement) return;
 
+    // Auto-dismiss duration based on type if not provided
     const autoClose = duration !== null ? duration : CONFIG.AUTO_DISMISS[type] || 5000;
+
+    // Create notification element
     const notif = document.createElement('div');
     notif.className = `notification-card ${type}`;
     notif.setAttribute('role', 'alert');
     notif.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
 
-    const iconMap = { success: '✓', error: '✗', warning: '⚠', info: 'ℹ' };
+    const iconMap = {
+      success: '✓',
+      error: '✗',
+      warning: '⚠',
+      info: 'ℹ'
+    };
     const icon = iconMap[type] || '●';
 
     notif.innerHTML = `
@@ -77,22 +92,30 @@ const NotificationManager = {
       <button class="notification-dismiss" aria-label="Cerrar">✕</button>
     `;
 
-    notif.querySelector('.notification-dismiss').addEventListener('click', () => this.dismiss(notif));
+    // Dismiss button handler
+    const dismissBtn = notif.querySelector('.notification-dismiss');
+    dismissBtn.addEventListener('click', () => this.dismiss(notif));
 
+    // Manage stack limit
     const currentChildren = Array.from(this.stackElement.children);
     if (currentChildren.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
-      this.dismiss(currentChildren[0]);
+      const oldest = currentChildren[0];
+      this.dismiss(oldest);
     }
 
     this.stackElement.appendChild(notif);
 
+    // Auto-dismiss after timeout
     if (autoClose > 0) {
       notif.timeoutId = setTimeout(() => {
         if (notif.isConnected) this.dismiss(notif);
       }, autoClose);
     }
+
+    // Small vibration for critical errors? No, only visual.
     return notif;
   },
+
   dismiss(notificationElement) {
     if (!notificationElement || !notificationElement.isConnected) return;
     if (notificationElement.timeoutId) clearTimeout(notificationElement.timeoutId);
@@ -101,6 +124,7 @@ const NotificationManager = {
       if (notificationElement.isConnected) notificationElement.remove();
     }, { once: true });
   },
+
   clearAll() {
     if (this.stackElement) {
       Array.from(this.stackElement.children).forEach(child => this.dismiss(child));
@@ -108,16 +132,22 @@ const NotificationManager = {
   }
 };
 
-// Helper seguro contra XSS
+// Helper to prevent XSS in notifications
 function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, m => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  })[m]);
+  return str.replace(/[&<>]/g, function(m) {
+    if (m === '&') return '&amp;';
+    if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;';
+    return m;
+  });
 }
-window.showNotification = (type, title, message, duration) => NotificationManager.show(type, title, message, duration);
+
+// Global shortcut for external calls
+window.showNotification = (type, title, message, duration) => 
+  NotificationManager.show(type, title, message, duration);
 
 /* ═══════════════════════════════════════════════
-ESTADO GLOBAL
+   ESTADO GLOBAL
 ═══════════════════════════════════════════════ */
 const State = {
   positions: [],
@@ -131,20 +161,29 @@ const State = {
 };
 
 /* ═══════════════════════════════════════════════
-UTILIDADES BASE
+   UTILIDADES BASE
 ═══════════════════════════════════════════════ */
 const $ = (id) => document.getElementById(id);
+
 const Storage = {
   get: (key) => {
-    try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } 
-    catch { return null; }
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
   },
   set: (key, value) => {
-    try { localStorage.setItem(key, JSON.stringify(value)); return true; } 
-    catch (e) { console.warn('⚠️ localStorage error:', e); return false; }
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (e) {
+      console.warn('⚠️ localStorage error:', e);
+      return false;
+    }
   },
   remove: (key) => localStorage.removeItem(key),
 };
+
 const Format = {
   usd: (v) => '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
   ars: (v) => '$' + Math.abs(v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -153,11 +192,12 @@ const Format = {
   weight: (v) => v.toFixed(1) + '%',
   date: (d) => new Date(d).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }),
 };
+
 const isPositive = (v) => v >= 0;
 const isArgentineBond = (t) => Object.prototype.hasOwnProperty.call(BOND_SYMBOLS, t.toUpperCase());
 
 /* ═══════════════════════════════════════════════
-CACHE CON TTL
+   CACHE CON TTL
 ═══════════════════════════════════════════════ */
 const PriceCache = {
   get(ticker) {
@@ -175,21 +215,7 @@ const PriceCache = {
 };
 
 /* ═══════════════════════════════════════════════
-RETRY UTIL (Exponential Backoff)
-═══════════════════════════════════════════════ */
-async function fetchWithRetry(url, retries = 2, delay = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fetchWithProxy(url);
-    } catch (error) {
-      if (i === retries - 1) throw error;
-      await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
-    }
-  }
-}
-
-/* ═══════════════════════════════════════════════
-RELOJES
+   RELOJES
 ═══════════════════════════════════════════════ */
 function updateClocks() {
   const opts = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
@@ -200,125 +226,212 @@ function updateClocks() {
 }
 
 /* ═══════════════════════════════════════════════
-HISTÓRICO DIARIO
+   HISTÓRICO DIARIO
 ═══════════════════════════════════════════════ */
 function saveDailySnapshot(totalUSD) {
   const today = new Date().toISOString().slice(0, 10);
   let history = Storage.get(CONFIG.LS_HISTORY) || [];
   const last = history[history.length - 1];
+  
   if (last?.date === today || totalUSD <= 0) return;
-  const benchChange = State.mepRate ? ((State.mepRate - CONFIG.DEFAULT_MEP) / CONFIG.DEFAULT_MEP) * 100 : 0;
+  
+  const benchChange = State.mepRate 
+    ? ((State.mepRate - CONFIG.DEFAULT_MEP) / CONFIG.DEFAULT_MEP) * 100 
+    : 0;
+    
   history.push({
     date: today,
     totalUSD: Math.round(totalUSD),
     benchmark: Math.round(totalUSD * (1 + benchChange / 100))
   });
-  if (history.length > CONFIG.HISTORY_MAX) history.splice(0, history.length - CONFIG.HISTORY_MAX);
+
+  if (history.length > CONFIG.HISTORY_MAX) {
+    history.splice(0, history.length - CONFIG.HISTORY_MAX);
+  }
   Storage.set(CONFIG.LS_HISTORY, history);
 }
 
 /* ═══════════════════════════════════════════════
-MÉTRICAS
+   MÉTRICAS
 ═══════════════════════════════════════════════ */
 function updateTopMetrics(processed, totalVal) {
   let totalGainUSD = 0, totalCostUSD = 0, todayChangeWeighted = 0;
   let bestToday = { ticker: '—', change: -Infinity };
+
   processed.forEach(item => {
     totalGainUSD += item.pnlUSD;
     totalCostUSD += item.costUSD;
-    if (item.info.change > bestToday.change) bestToday = { ticker: item.pos.ticker, change: item.info.change };
+    if (item.info.change > bestToday.change) {
+      bestToday = { ticker: item.pos.ticker, change: item.info.change };
+    }
     const weight = totalVal > 0 ? item.valUSD / totalVal : 0;
     todayChangeWeighted += weight * item.info.change;
   });
+
   $('totalGain').textContent = Format.usd(totalGainUSD);
-  $('totalGainPct').textContent = totalCostUSD > 0 ? Format.pct((totalGainUSD / totalCostUSD) * 100) : '0.00%';
+  $('totalGainPct').textContent = totalCostUSD > 0 
+    ? Format.pct((totalGainUSD / totalCostUSD) * 100) 
+    : '0.00%';
   $('posCount').textContent = processed.length;
   $('bestTicker').textContent = bestToday.ticker;
-  $('bestPct').textContent = bestToday.change !== -Infinity ? Format.pct(bestToday.change) : '—';
+  $('bestPct').textContent = bestToday.change !== -Infinity 
+    ? Format.pct(bestToday.change) 
+    : '—';
   $('bestPct').className = `metric-sub ${isPositive(bestToday.change) ? 'pos' : 'neg'}`;
+  
   $('todayPct').textContent = Format.pct(todayChangeWeighted);
   $('todayPct').className = `metric-val ${isPositive(todayChangeWeighted) ? 'pos' : 'neg'}`;
+  
   const todayAbsUSD = totalVal * (todayChangeWeighted / 100);
   $('todayAbs').textContent = Format.usd(todayAbsUSD);
   $('todayAbs').className = `metric-sub ${isPositive(todayAbsUSD) ? 'pos' : 'neg'}`;
 }
 
 /* ═══════════════════════════════════════════════
-GRÁFICOS
+   GRÁFICOS
 ═══════════════════════════════════════════════ */
 function renderPieChart(processed) {
   const ctx = $('pieChart')?.getContext('2d');
   if (!ctx || processed.length === 0) return;
   if (State.charts.pie) State.charts.pie.destroy();
+
   const colors = ['#378ADD', '#1D9E75', '#E8A838', '#E05C5C', '#8B5CF6', '#F97316', '#06B6D4', '#84CC16'];
+  
   State.charts.pie = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels: processed.map(p => p.pos.ticker),
-      datasets: [{ data: processed.map(p => p.valUSD), backgroundColor: colors.slice(0, processed.length), borderWidth: 0 }]
+      datasets: [{
+        data: processed.map(p => p.valUSD),
+        backgroundColor: colors.slice(0, processed.length),
+        borderWidth: 0,
+      }]
     },
-    options: { plugins: { legend: { display: false } }, maintainAspectRatio: false, cutout: '70%', responsive: true }
+    options: {
+      plugins: { legend: { display: false } },
+      maintainAspectRatio: false,
+      cutout: '70%',
+      responsive: true,
+    }
   });
+
   const legend = $('pieLegend');
-  if (legend) legend.innerHTML = processed.map((p, i) => `<span><span class="leg-dot" style="background:${colors[i]}"></span>${p.pos.ticker}</span>`).join('');
+  if (legend) {
+    legend.innerHTML = processed.map((p, i) => 
+      `<span><span class="leg-dot" style="background:${colors[i]}"></span>${p.pos.ticker}</span>`
+    ).join('');
+  }
 }
 
 function renderLineChart() {
   const ctx = $('lineChart')?.getContext('2d');
   if (!ctx) return;
   if (State.charts.line) State.charts.line.destroy();
+
   let history = Storage.get(CONFIG.LS_HISTORY) || [];
   const now = new Date();
-  const days = State.activeRange === '1m' ? 30 : State.activeRange === '6m' ? 180 : State.activeRange === '1y' ? 365 : 0;
+  const days = State.activeRange === '1m' ? 30 
+               : State.activeRange === '6m' ? 180 
+               : State.activeRange === '1y' ? 365 
+               : 0;
+  
   if (history.length > 0 && days > 0) {
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
     history = history.filter(h => new Date(h.date) >= cutoff);
   } else if (State.activeRange === 'ytd' && history.length > 0) {
     const yearStart = new Date(now.getFullYear(), 0, 1);
     history = history.filter(h => new Date(h.date) >= yearStart);
   }
+
   if (history.length < 3) {
-    const points = 30; let curr = State.processed.reduce((s, i) => s + i.valUSD, 0) * 0.85; let bench = curr * 0.98;
+    const points = 30;
+    let curr = State.processed.reduce((s, i) => s + i.valUSD, 0) * 0.85;
+    let bench = curr * 0.98;
     for (let i = 0; i < points; i++) {
-      const d = new Date(); d.setDate(d.getDate() - (points - i));
-      curr *= 1 + (Math.random() - 0.4) * 0.03; bench *= 1 + (Math.random() - 0.45) * 0.02;
-      history.push({ date: d.toISOString().slice(0, 10), totalUSD: Math.round(curr), benchmark: Math.round(bench) });
+      const d = new Date();
+      d.setDate(d.getDate() - (points - i));
+      curr *= 1 + (Math.random() - 0.4) * 0.03;
+      bench *= 1 + (Math.random() - 0.45) * 0.02;
+      history.push({ 
+        date: d.toISOString().slice(0, 10), 
+        totalUSD: Math.round(curr), 
+        benchmark: Math.round(bench) 
+      });
     }
     const realTotal = State.processed.reduce((s, i) => s + i.valUSD, 0);
     history[history.length - 1].totalUSD = Math.round(realTotal);
     history[history.length - 1].benchmark = Math.round(realTotal * 0.98);
   }
+
   State.charts.line = new Chart(ctx, {
     type: 'line',
     data: {
       labels: history.map(h => h.date.slice(5)),
       datasets: [
-        { label: 'Portfolio', data: history.map(h => h.totalUSD), borderColor: '#378ADD', backgroundColor: 'rgba(55,138,221,0.1)', tension: 0.35, fill: true, pointRadius: 0, pointHoverRadius: 4 },
-        { label: 'Benchmark', data: history.map(h => h.benchmark), borderColor: '#1D9E75', borderDash: [5, 5], tension: 0.35, pointRadius: 0 }
+        { 
+          label: 'Portfolio', 
+          data: history.map(h => h.totalUSD), 
+          borderColor: '#378ADD', 
+          backgroundColor: 'rgba(55,138,221,0.1)', 
+          tension: 0.35, 
+          fill: true, 
+          pointRadius: 0, 
+          pointHoverRadius: 4 
+        },
+        { 
+          label: 'Benchmark', 
+          data: history.map(h => h.benchmark), 
+          borderColor: '#1D9E75', 
+          borderDash: [5, 5], 
+          tension: 0.35, 
+          pointRadius: 0 
+        }
       ]
     },
-    options: { plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }, maintainAspectRatio: false, responsive: true, scales: { x: { display: false }, y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v.toLocaleString()}` } } } }
+    options: {
+      plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+      maintainAspectRatio: false, 
+      responsive: true,
+      scales: { 
+        x: { display: false }, 
+        y: { 
+          grid: { color: 'rgba(0,0,0,0.05)' }, 
+          ticks: { callback: v => `$${v.toLocaleString()}` } 
+        } 
+      }
+    }
   });
 }
 
 /* ═══════════════════════════════════════════════
-SINCRONIZACIÓN DE MERCADO
+   SINCRONIZACIÓN DE MERCADO (con notificaciones)
 ═══════════════════════════════════════════════ */
 async function fetchBondsMarketData() {
   try {
     const res = await fetch(API.BONDS_DATA);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
     const result = await res.json();
     if (result.success && Array.isArray(result.data)) {
       State.marketBonds = result.data;
+      
       result.data.forEach(bond => {
-        State.priceCache[bond.symbol.toUpperCase()] = { price: bond.price, change: parseFloat(bond.change) || 0, source: 'Amygdalé API' };
+        const symbol = bond.symbol.toUpperCase();
+        State.priceCache[symbol] = {
+          price: bond.price,
+          change: parseFloat(bond.change) || 0,
+          source: 'Amygdalé API'
+        };
       });
-      NotificationManager.show('info', 'Mercado sincronizado', `${result.count} bonos actualizados.`, 3000);
-    } else { throw new Error('Formato inválido'); }
+      console.log(`[API] Sincronizados ${result.count} bonos en memoria.`);
+      NotificationManager.show('info', 'Mercado sincronizado', `${result.count} bonos actualizados desde Amygdalé API.`, 3000);
+    } else {
+      throw new Error('Formato de respuesta inválido');
+    }
   } catch (e) {
-    console.error('[Fetch Error] Fallo sincronización bonos:', e.message);
-    NotificationManager.show('error', 'Error de sincronización', `No se cargaron bonos: ${e.message}`, 6000);
+    console.error('[Security/Fetch Error] Fallo en sincronización de bonos:', e.message);
+    NotificationManager.show('error', 'Error de sincronización', `No se pudieron cargar los bonos: ${e.message}`, 6000);
     State.marketBonds = [];
   }
 }
@@ -326,78 +439,141 @@ async function fetchBondsMarketData() {
 async function renderBondsInsightWidget() {
   const container = $('bondsInsightContainer');
   if (!container) return;
+
   try {
     const res = await fetch(API.BONDS_TOP_TIR);
     if (!res.ok) throw new Error();
     const result = await res.json();
+    
     if (!result.success || !Array.isArray(result.data) || result.data.length === 0) {
       container.innerHTML = '<div class="empty-row">Métricas de TIR no disponibles</div>';
       return;
     }
+
     container.innerHTML = '';
-    result.data.slice(0, 5).forEach(bond => {
-      const row = document.createElement('div'); row.className = 'insight-row';
-      row.innerHTML = `<span class="insight-symbol">${bond.symbol}</span><span class="insight-details">u$s ${bond.price.toFixed(2)} | TIR: ${bond.tir.toFixed(1)}% | Par: ${bond.paridad.toFixed(1)}%</span>`;
+    const top5 = result.data.slice(0, 5);
+    
+    top5.forEach(bond => {
+      const row = document.createElement('div');
+      row.className = 'insight-row';
+      
+      const symbolSpan = document.createElement('span');
+      symbolSpan.className = 'insight-symbol';
+      symbolSpan.textContent = bond.symbol;
+      
+      const detailsSpan = document.createElement('span');
+      detailsSpan.className = 'insight-details';
+      detailsSpan.textContent = `u$s ${bond.price.toFixed(2)} | TIR: ${bond.tir.toFixed(1)}% | Paridad: ${bond.paridad.toFixed(1)}%`;
+      
+      row.appendChild(symbolSpan);
+      row.appendChild(detailsSpan);
       container.appendChild(row);
     });
-  } catch { container.innerHTML = '<div class="error-msg">Error de conexión con análisis</div>'; }
+  } catch {
+    container.innerHTML = '<div class="error-msg">Error de conexión con el módulo de análisis</div>';
+  }
 }
 
 /* ═══════════════════════════════════════════════
-RIESGO DE CARTERA
+   RIESGO DE CARTERA (ALERTAS AUTOMÁTICAS)
 ═══════════════════════════════════════════════ */
 function checkPortfolioRisk(processed, totalVal) {
   if (!processed.length || totalVal <= 0) return;
+  
+  // Concentration warning (>40%)
   const highWeight = processed.find(item => (item.valUSD / totalVal) * 100 > 40);
-  if (highWeight) NotificationManager.show('warning', 'Riesgo de concentración', `${highWeight.pos.ticker} >40% cartera. Diversifique.`, 8000);
+  if (highWeight) {
+    NotificationManager.show('warning', 'Riesgo de concentración', 
+      `${highWeight.pos.ticker} representa >40% de la cartera. Considere diversificar.`, 8000);
+  }
   
-  const todayChangeWeighted = processed.reduce((acc, item) => acc + (item.valUSD / totalVal) * item.info.change, 0);
-  if (todayChangeWeighted < -3) NotificationManager.show('warning', 'Caída significativa', `Rendimiento: ${Format.pct(todayChangeWeighted)}. Revise exposición.`, 7000);
+  // Daily loss alert (portfolio drop >3%)
+  const todayChangeWeighted = processed.reduce((acc, item) => {
+    const weight = item.valUSD / totalVal;
+    return acc + weight * item.info.change;
+  }, 0);
+  if (todayChangeWeighted < -3) {
+    NotificationManager.show('warning', 'Caída significativa', 
+      `Rendimiento diario: ${Format.pct(todayChangeWeighted)}. Revisar exposición.`, 7000);
+  }
   
-  const bestPerformer = processed.reduce((best, item) => item.info.change > best.change ? { ticker: item.pos.ticker, change: item.info.change } : best, { ticker: '', change: -Infinity });
-  if (bestPerformer.change > 5) NotificationManager.show('info', 'Oportunidad táctica', `${bestPerformer.ticker} +${bestPerformer.change.toFixed(2)}%. Revise fundamentales.`, 6000);
+  // Positive AI insight: if best performer >5%
+  const bestPerformer = processed.reduce((best, item) => 
+    item.info.change > best.change ? { ticker: item.pos.ticker, change: item.info.change } : best, 
+    { ticker: '', change: -Infinity });
+  if (bestPerformer.change > 5) {
+    NotificationManager.show('info', 'Oportunidad táctica', 
+      `${bestPerformer.ticker} +${bestPerformer.change.toFixed(2)}% hoy. Considere revisar fundamentales.`, 6000);
+  }
 }
 
 /* ═══════════════════════════════════════════════
-RENDER PRINCIPAL
+   RENDER PRINCIPAL
 ═══════════════════════════════════════════════ */
 function renderAll() {
   let totalPortfolioUSD = 0;
   const tbody = $('posTable');
+
   State.processed = State.positions.map(pos => {
     const info = State.priceCache[pos.ticker.toUpperCase()] || { price: 0, change: 0 };
     const holdings = pos.holdings || [];
     const totalQty = holdings.reduce((sum, h) => sum + h.qty, 0);
+
     const totalCostUSD = holdings.reduce((sum, h) => {
       const tc = h.tc || State.mepRate || 1;
       const priceUSD = pos.type === 'ar' ? h.price / tc : h.price;
       return sum + priceUSD * h.qty;
     }, 0);
-    const currentValUSD = pos.type === 'ar' ? (info.price * totalQty) / (State.mepRate || 1) : info.price * totalQty;
+
+    const currentValUSD = pos.type === 'ar'
+      ? (info.price * totalQty) / (State.mepRate || 1)
+      : info.price * totalQty;
+
     const pnlUSD = currentValUSD - totalCostUSD;
     const per = totalCostUSD > 0.01 ? (pnlUSD / totalCostUSD) * 100 : 0;
-    const ppcOriginal = totalQty > 0 ? holdings.reduce((sum, h) => sum + h.price * h.qty, 0) / totalQty : 0;
+    
+    const ppcOriginal = totalQty > 0 
+      ? holdings.reduce((sum, h) => sum + h.price * h.qty, 0) / totalQty 
+      : 0;
+
     totalPortfolioUSD += currentValUSD;
     return { pos, info, qty: totalQty, valUSD: currentValUSD, costUSD: totalCostUSD, pnlUSD, per, ppcOriginal };
   });
+
   $('totalVal').textContent = Format.usd(totalPortfolioUSD);
   updateTopMetrics(State.processed, totalPortfolioUSD);
   renderPieChart(State.processed);
   renderLineChart();
   saveDailySnapshot(totalPortfolioUSD);
-  checkPortfolioRisk(State.processed, totalPortfolioUSD);
   
+  // Risk & AI insights after each render
+  checkPortfolioRisk(State.processed, totalPortfolioUSD);
+
   if (State.processed.length === 0) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty-row">Agregá tu primera posición ↑</td></tr>';
     return;
   }
+
   tbody.innerHTML = State.processed.map((item, i) => {
     const { pos, info, qty, valUSD, pnlUSD, per, ppcOriginal } = item;
     const weight = totalPortfolioUSD > 0 ? (valUSD / totalPortfolioUSD) * 100 : 0;
     const firstDate = new Date(Math.min(...pos.holdings.map(h => new Date(h.date).getTime())));
     const tenencia = Math.ceil((Date.now() - firstDate) / (1000 * 60 * 60 * 24));
     const badge = getAssetBadge(pos.ticker, pos.type);
-    return `<tr><td><strong>${pos.ticker}</strong> ${badge}</td><td>${pos.type === 'ar' ? Format.ars(info.price) : Format.usd(info.price)}</td><td class="${isPositive(info.change) ? 'pos' : 'neg'}">${Format.pct(info.change)}</td><td>${Format.qty(qty)}</td><td>${pos.type === 'ar' ? Format.ars(ppcOriginal) : Format.usd(ppcOriginal)}</td><td>${tenencia}d</td><td>${Format.weight(weight)}</td><td class="${isPositive(pnlUSD) ? 'pos' : 'neg'}">${Format.usd(pnlUSD)}</td><td class="${isPositive(per) ? 'pos' : 'neg'}">${Format.pct(per)}</td><td><button class="del-btn" onclick="window.deletePos(${i})">✕</button></td></tr>`;
+
+    return `
+      <tr>
+        <td><strong>${pos.ticker}</strong> ${badge}</td>
+        <td>${pos.type === 'ar' ? Format.ars(info.price) : Format.usd(info.price)}</td>
+        <td class="${isPositive(info.change) ? 'pos' : 'neg'}">${Format.pct(info.change)}</td>
+        <td>${Format.qty(qty)}</td>
+        <td>${pos.type === 'ar' ? Format.ars(ppcOriginal) : Format.usd(ppcOriginal)}</td>
+        <td>${tenencia}d</td>
+        <td>${Format.weight(weight)}</td>
+        <td class="${isPositive(pnlUSD) ? 'pos' : 'neg'}">${Format.usd(pnlUSD)}</td>
+        <td class="${isPositive(per) ? 'pos' : 'neg'}">${Format.pct(per)}</td>
+        <td><button class="del-btn" onclick="window.deletePos(${i})" aria-label="Eliminar ${pos.ticker}">✕</button></td>
+      </tr>`;
   }).join('');
 }
 
@@ -409,7 +585,7 @@ function getAssetBadge(ticker, type) {
 }
 
 /* ═══════════════════════════════════════════════
-API DE PRECIOS (MEJORADA)
+   API DE PRECIOS
 ═══════════════════════════════════════════════ */
 async function fetchWithProxy(url) {
   const fullUrl = `${CONFIG.PROXY}?url=${encodeURIComponent(url)}`;
@@ -420,54 +596,56 @@ async function fetchWithProxy(url) {
 
 async function getPrice(ticker, type) {
   const uppercaseTicker = ticker.toUpperCase();
-
-  // 1️⃣ Bonos AR -> API interna
-  if (type === 'ar' && isArgentineBond(uppercaseTicker)) {
-    const symbol = BOND_SYMBOLS[uppercaseTicker] || uppercaseTicker;
-    let localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
-    if (!localBond) {
-      await fetchBondsMarketData();
-      localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
+  try {
+    if (type === 'ar' && isArgentineBond(uppercaseTicker)) {
+      const symbol = BOND_SYMBOLS[uppercaseTicker] || uppercaseTicker;
+      let localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
+      
+      if (!localBond) {
+        await fetchBondsMarketData();
+        localBond = State.marketBonds.find(b => b.symbol.toUpperCase() === symbol);
+      }
+      
+      if (localBond) {
+        return { price: localBond.price, change: localBond.change || 0, source: 'Amygdalé API' };
+      }
     }
-    if (localBond) return { price: localBond.price, change: localBond.change || 0, source: 'Amygdalé API' };
-  }
 
-  // 2️⃣ Crypto -> CoinGecko
-  if (type === 'crypto') {
-    const id = CRYPTO_MAP[uppercaseTicker] || ticker.toLowerCase();
-    try {
-      const data = await fetchWithRetry(`${API.COINGECKO}?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
+    if (type === 'crypto') {
+      const id = CRYPTO_MAP[uppercaseTicker] || ticker.toLowerCase();
+      const data = await fetchWithProxy(`${API.COINGECKO}?ids=${id}&vs_currencies=usd&include_24hr_change=true`);
       const coin = data[Object.keys(data)[0]];
       if (coin?.usd) return { price: coin.usd, change: coin.usd_24h_change || 0, source: 'CoinGecko' };
-    } catch { console.warn(`⚠️ CoinGecko falló para ${ticker}`); }
-  }
+    }
 
-  // 3️⃣ Yahoo Finance -> Retry + Fallback
-  const yahooUrls = [];
-  if (type === 'ar') yahooUrls.push(`${API.YAHOO}${uppercaseTicker}.BA?interval=1d&range=2d`);
-  else yahooUrls.push(`${API.YAHOO}${uppercaseTicker}?interval=1d&range=2d`);
-
-  for (const url of yahooUrls) {
-    try {
-      const data = await fetchWithRetry(url);
-      const meta = data?.chart?.result?.[0]?.meta;
-      if (meta?.regularMarketPrice && meta.regularMarketPrice > 0) {
-        const prev = meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice;
-        const change = ((meta.regularMarketPrice - prev) / prev) * 100;
-        return { price: meta.regularMarketPrice, change, source: 'Yahoo' };
+    if (type === 'ar') {
+      const data = await fetchWithProxy(`${API.YAHOO}${uppercaseTicker}.BA?interval=1d&range=2d`);
+      const meta = data.chart?.result?.[0]?.meta;
+      if (meta?.regularMarketPrice) {
+        return { 
+          price: meta.regularMarketPrice, 
+          change: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100,
+          source: 'Yahoo' 
+        };
       }
-    } catch (e) { console.warn(`⚠️ Yahoo falló en ${url}: ${e.message}`); }
-  }
+    }
 
-  // 4️⃣ Fallback: Caché stale (mejor que precio 0)
-  const staleCache = Storage.get(CONFIG.LS_CACHE)?.[uppercaseTicker]?.data;
-  if (staleCache && staleCache.price > 0) {
-    console.log(`🔄 Usando caché stale para ${uppercaseTicker}`);
-    return { ...staleCache, source: 'Cache (stale)' };
-  }
+    const data = await fetchWithProxy(`${API.YAHOO}${uppercaseTicker}?interval=1d&range=2d`);
+    const meta = data.chart?.result?.[0]?.meta;
+    if (meta?.regularMarketPrice) {
+      return { 
+        price: meta.regularMarketPrice, 
+        change: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100,
+        source: 'Yahoo' 
+      };
+    }
 
-  // 5️⃣ Último recurso
-  return { price: 0, change: 0, source: 'N/A' };
+    return { price: 0, change: 0, source: 'N/A' };
+  } catch (e) {
+    console.warn(`⚠️ Error obteniendo ${ticker}:`, e.message);
+    NotificationManager.show('error', `Error cotización ${ticker}`, e.message, 5000);
+    return { price: 0, change: 0, source: 'Error' };
+  }
 }
 
 async function getPriceCached(ticker, type) {
@@ -480,16 +658,17 @@ async function getPriceCached(ticker, type) {
 }
 
 /* ═══════════════════════════════════════════════
-FORMULARIO & EVENTOS
+   FORMULARIO & EVENTOS (con notificaciones)
 ═══════════════════════════════════════════════ */
 async function handleAdd(e) {
   if (e) e.preventDefault();
+  
   const ticker = $('tickerInput').value.trim().toUpperCase();
   const qty = parseFloat($('qtyInput').value);
   const ppc = parseFloat($('avgInput').value);
   const days = parseInt($('daysInput').value) || 0;
   const errorEl = $('addError');
-  
+
   if (!ticker || isNaN(qty) || isNaN(ppc) || qty <= 0 || ppc <= 0) {
     errorEl.textContent = 'Datos inválidos. Revisá cantidad y precio.';
     errorEl.style.display = 'block';
@@ -497,68 +676,101 @@ async function handleAdd(e) {
     return;
   }
   errorEl.style.display = 'none';
+
+  const buyDate = new Date();
+  buyDate.setDate(buyDate.getDate() - days);
   
-  const buyDate = new Date(); buyDate.setDate(buyDate.getDate() - days);
   const holding = { qty, price: ppc, date: buyDate.toISOString(), tc: State.mepRate };
   const existing = State.positions.find(p => p.ticker === ticker);
   
-  if (existing) existing.holdings.push(holding);
-  else State.positions.push({ ticker, type: State.activeType, holdings: [holding] });
-  
+  if (existing) {
+    existing.holdings.push(holding);
+  } else {
+    State.positions.push({ ticker, type: State.activeType, holdings: [holding] });
+  }
+
   Storage.set(CONFIG.LS_POSITIONS, State.positions);
   ['tickerInput', 'qtyInput', 'avgInput', 'daysInput'].forEach(id => $(id).value = '');
   
   State.priceCache[ticker] = await getPriceCached(ticker, State.activeType);
   renderAll();
   if ($('bondsInsightContainer')) await renderBondsInsightWidget();
-  NotificationManager.show('success', 'Posición agregada', `${qty} ${ticker} añadido.`, 4000);
+  
+  NotificationManager.show('success', 'Posición agregada', `${qty} ${ticker} añadido a la cartera.`, 4000);
 }
 
 /* ═══════════════════════════════════════════════
-EXPORT / IMPORT JSON
+   EXPORT / IMPORT JSON (con notificaciones)
 ═══════════════════════════════════════════════ */
 function exportPortfolio() {
   try {
-    const payload = { version: '2.2', exported: new Date().toISOString(), positions: State.positions, history: Storage.get(CONFIG.LS_HISTORY) || [] };
+    const payload = {
+      version: '2.2',
+      exported: new Date().toISOString(),
+      positions: State.positions,
+      history: Storage.get(CONFIG.LS_HISTORY) || []
+    };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `amygdale_backup_${new Date().toISOString().slice(0, 10)}.json`; a.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `amygdale_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
     URL.revokeObjectURL(url);
-    NotificationManager.show('success', 'Exportación completa', 'Backup generado.', 3500);
-  } catch (err) { NotificationManager.show('error', 'Error al exportar', err.message, 5000); }
+    NotificationManager.show('success', 'Exportación completa', 'Copia de seguridad generada correctamente.', 3500);
+  } catch (err) {
+    NotificationManager.show('error', 'Error al exportar', err.message, 5000);
+  }
 }
 
 function injectControls() {
   const container = $('controlsContainer');
   if (!container || $('btnExport')) return;
-  const fileInput = document.createElement('input'); fileInput.type = 'file'; fileInput.accept = '.json'; fileInput.style.display = 'none'; fileInput.id = 'importInput';
+  
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json';
+  fileInput.style.display = 'none';
+  fileInput.id = 'importInput';
   document.body.appendChild(fileInput);
-  
-  const controls = document.createElement('div'); controls.className = 'footer-controls';
-  controls.innerHTML = `<button class="ctrl-btn" id="btnExport">📥 Exportar</button><button class="ctrl-btn" id="btnImport">📤 Importar</button>`;
+
+  const controls = document.createElement('div');
+  controls.className = 'footer-controls';
+  controls.innerHTML = `
+    <button class="ctrl-btn" id="btnExport">📥 Exportar</button>
+    <button class="ctrl-btn" id="btnImport">📤 Importar</button>
+  `;
   container.appendChild(controls);
-  
+
   $('btnExport').onclick = exportPortfolio;
   $('btnImport').onclick = () => $('importInput').click();
+  
   $('importInput').onchange = (e) => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const data = JSON.parse(evt.target.result);
         if (data.positions) {
-          State.positions = data.positions; Storage.set(CONFIG.LS_POSITIONS, State.positions);
+          State.positions = data.positions;
+          Storage.set(CONFIG.LS_POSITIONS, State.positions);
           if (data.history) Storage.set(CONFIG.LS_HISTORY, data.history);
-          init(); NotificationManager.show('success', 'Importación exitosa', 'Portafolio restaurado.', 4000);
-        } else throw new Error('Archivo inválido');
-      } catch (err) { NotificationManager.show('error', 'Error de importación', 'Archivo corrupto o inválido.', 6000); }
+          init();
+          NotificationManager.show('success', 'Importación exitosa', 'Portafolio restaurado desde backup.', 4000);
+        } else {
+          throw new Error('Archivo inválido');
+        }
+      } catch (err) {
+        NotificationManager.show('error', 'Error de importación', 'El archivo no es válido o está corrupto.', 6000);
+      }
     };
     reader.readAsText(file);
   };
 }
 
 /* ═══════════════════════════════════════════════
-INICIALIZACIÓN
+   INICIALIZACIÓN
 ═══════════════════════════════════════════════ */
 async function init() {
   updateClocks();
@@ -566,47 +778,68 @@ async function init() {
   window.clockInterval = setInterval(updateClocks, 1000);
   
   State.positions = Storage.get(CONFIG.LS_POSITIONS) || [];
+
   try {
     const mep = await fetchWithProxy(API.DOLARAPI);
     State.mepRate = parseFloat(mep.venta) || CONFIG.DEFAULT_MEP;
-    if ($('sourceRow')) $('sourceRow').textContent = `Dólar MEP: $${State.mepRate.toLocaleString('es-AR')}`;
+    if ($('sourceRow')) {
+      $('sourceRow').textContent = `Dólar MEP: $${State.mepRate.toLocaleString('es-AR')}`;
+    }
     NotificationManager.show('info', 'Tipo de cambio actualizado', `MEP: $${State.mepRate.toLocaleString('es-AR')}`, 4000);
   } catch {
     State.mepRate = CONFIG.DEFAULT_MEP;
     NotificationManager.show('error', 'Error MEP', 'Usando valor por defecto.', 5000);
   }
-  
+
   await fetchBondsMarketData();
+
   if (State.positions.length > 0) {
-    const results = await Promise.allSettled(State.positions.map(p => getPriceCached(p.ticker, p.type)));
-    State.positions.forEach((p, i) => {
-      if (results[i].status === 'fulfilled') State.priceCache[p.ticker.toUpperCase()] = results[i].value;
-    });
+    const results = await Promise.all(State.positions.map(p => getPriceCached(p.ticker, p.type)));
+    State.positions.forEach((p, i) => State.priceCache[p.ticker.toUpperCase()] = results[i]);
   }
+
   renderAll();
   injectControls();
-  if ($('bondsInsightContainer')) await renderBondsInsightWidget();
-  
+  if ($('bondsInsightContainer')) {
+    await renderBondsInsightWidget();
+  }
+
   $('addBtn').onclick = handleAdd;
-  document.querySelectorAll('.type-btn').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active'); State.activeType = btn.dataset.type;
-  }));
-  document.querySelectorAll('.range-btn').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active'); State.activeRange = btn.dataset.range; renderLineChart();
-  }));
-  
+
+  document.querySelectorAll('.type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.activeType = btn.dataset.type;
+    });
+  });
+
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.activeRange = btn.dataset.range;
+      renderLineChart();
+    });
+  });
+
   window.deletePos = (index) => {
     const removed = State.positions[index];
-    State.positions.splice(index, 1); Storage.set(CONFIG.LS_POSITIONS, State.positions);
-    renderAll(); if ($('bondsInsightContainer')) renderBondsInsightWidget();
-    NotificationManager.show('info', 'Posición eliminada', `${removed.ticker} removido.`, 3500);
+    State.positions.splice(index, 1);
+    Storage.set(CONFIG.LS_POSITIONS, State.positions);
+    renderAll();
+    if ($('bondsInsightContainer')) renderBondsInsightWidget();
+    NotificationManager.show('info', 'Posición eliminada', `${removed.ticker} removido de la cartera.`, 3500);
   };
   
+  // Final ready notification
   NotificationManager.show('info', 'Sistema listo', 'Amygdalé monitoreando mercados y riesgos.', 3000);
 }
 
+// Initialize NotificationManager and start app
 NotificationManager.init();
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-else init();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
