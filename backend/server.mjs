@@ -210,7 +210,11 @@ fastify.post('/api/cache/clear', async () => {
   return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
 })
 
-/* INICIO DEL SERVIDOR */
+/*
+|--------------------------------------------------------------------------
+| INICIO DEL SERVIDOR
+|--------------------------------------------------------------------------
+*/
 const start = async () => {
   try {
     await fastify.listen({
