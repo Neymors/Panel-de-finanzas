@@ -1,3 +1,13 @@
+/**
+ * Amygdalé — Financial Dashboard & Risk Control
+ * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
+ * Version: 3.3 — Fixed Yahoo .BA Suffix Automation & Defensive formatPct
+ */
+'use strict';
+
+/* ═══════════════════════════════════════════════
+   CONFIGURACIÓN Y CONSTANTES
+═══════════════════════════════════════════════ */
 const CONFIG = {
   PROXY: '/api/proxy',
   LS_POSITIONS: 'portfolio_positions_v2',
@@ -184,12 +194,16 @@ async function getPrice(ticker, type) {
         price = data[id].usd;
         change = data[id].usd_24h_change || 0;
       } else {
-        throw new Error('Formato Crypto inválido');
+        throw new Error('Formato Crypto inválido o no encontrado');
       }
     } 
     else { 
+      // Inyección automática del sufijo .BA para acciones argentinas en Yahoo Finance
       let symbol = ticker.toUpperCase();
-      if (symbol === 'APPL') symbol = 'AAPL';
+      const posObj = State.positions.find(p => p.ticker.toUpperCase() === symbol);
+      if (posObj && posObj.currency === 'ARS' && !symbol.endsWith('.BA')) {
+        symbol = `${symbol}.BA`;
+      }
 
       const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, {
         interval: '1d',
@@ -215,7 +229,7 @@ async function getPrice(ticker, type) {
           price = meta.regularMarketPrice;
           change = meta.regularMarketChangePercent || 0;
         } else {
-          throw new Error('No se encontraron precios válidos en Yahoo Finance');
+          throw new Error('No se encontraron precios válidos en Yahoo');
         }
 
         if (meta?.shortName) name = meta.shortName;
@@ -231,6 +245,7 @@ async function getPrice(ticker, type) {
 
   } catch (err) {
     console.error(`⚠️ Error obteniendo ${ticker}:`, err.message);
+    // Solución al crash: Siempre proveer 'change: 0' por defecto si falla la petición
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
@@ -292,6 +307,7 @@ function formatARS(val) {
 }
 
 function formatPct(val) {
+  if (val === undefined || val === null || isNaN(val)) return '0.00%';
   return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
 }
 
@@ -302,7 +318,7 @@ function triggerReflow(el) {
 async function renderAll() {
   const { processed, totalUSD } = await processPositions();
   
-  // Saneo Defensivo de los selectores del Header para acoplarse al index.html real
+  // Mapeo seguro contra el HTML real de Amygdalé
   if ($('totalVal')) $('totalVal').textContent = formatUSD(totalUSD);
   if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
   if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
@@ -314,7 +330,7 @@ async function renderAll() {
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">No hay posiciones activas para este segmento.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>`;
   } else {
     filtered.forEach((p, index) => {
       const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
@@ -360,7 +376,6 @@ async function renderAll() {
    MOTOR DE RENDERIZADO DE GRÁFICOS
 ═══════════════════════════════════════════════ */
 function renderDonutChart(items) {
-  // Ajustado a 'pieChart' para coincidir con tu index.html real
   const ctx = $('pieChart'); 
   if (!ctx) return;
 
@@ -521,7 +536,7 @@ async function handleAdd(e) {
 
   const ticker = $('tickerInput').value.trim().toUpperCase();
   const qty = parseFloat($('qtyInput').value);
-  const ppc = parseFloat($('avgInput').value); // Corregido: Tu ID en el HTML es 'avgInput'
+  const ppc = parseFloat($('avgInput').value);
   const days = parseInt($('daysInput').value) || 0;
   
   const typeActiveBtn = document.querySelector('.type-btn.active');
@@ -532,13 +547,11 @@ async function handleAdd(e) {
     return;
   }
 
-  // Mapeador Dinámico de Tipos para evitar desvíos 404 a Yahoo Finance
   let type = 'ACCION';
   let currency = 'USD';
 
   if (rawType === 'ar') {
     currency = 'ARS';
-    // Si el ticker figura dentro de la base de datos de bonos locales, va por Rava
     const isBono = State.bondsDb.some(x => x.symbol.toUpperCase() === ticker.toUpperCase());
     type = isBono ? 'BONO' : 'ACCION';
   } else if (rawType === 'crypto') {
