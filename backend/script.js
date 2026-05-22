@@ -619,13 +619,12 @@ function migratePositionTypes() {
 }
 
 
-   Tipo de activo mapeado:
+/*   Tipo de activo mapeado:
      ar     → type: 'AR'      currency: 'ARS'
      usd    → type: 'ACCION'  currency: 'USD'
      crypto → type: 'CRYPTO'  currency: 'USD'
    Bonos: el usuario selecciona 'ar' y el ticker
-   coincide con la bondsDb → se guarda como 'BONO'
-═══════════════════════════════════════════════ */
+   coincide con la bondsDb → se guarda como 'BONO' */
 async function handleAdd() {
   const errorDiv = $('addError');
   if (errorDiv) errorDiv.textContent = '';
