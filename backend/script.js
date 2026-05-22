@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
- * Version: 3.1 — Fixed Multi-Currency Math & Yahoo Robustness
+ * Version: 3.2 — Fixed null crash, AR ticker routing, Yahoo 404 fallback
  */
 'use strict';
 
@@ -13,7 +13,7 @@ const CONFIG = {
   LS_POSITIONS: 'portfolio_positions_v2',
   LS_CACHE: 'amygdale_price_cache_v1',
   LS_HISTORY: 'amygdale_history_v1',
-  CACHE_TTL: 5 * 60 * 1000,      // 5 minutos
+  CACHE_TTL: 5 * 60 * 1000,
   DEFAULT_MEP: 1200,
   HISTORY_MAX: 365,
   NOTIFICATION_MAX_VISIBLE: 5,
@@ -28,13 +28,14 @@ const CONFIG = {
 const API = {
   BONDS_DATA: '/api/bonds',
   BONDS_TOP_TIR: '/api/top/tir',
+  RAVA_STOCKS: 'https://mercado.rava.com/api/prices/acciones',
   DOLARAPI: 'https://dolarapi.com/v1/dolares/bolsa',
   COINGECKO: 'https://api.coingecko.com/api/v3/simple/price',
   YAHOO: 'https://query1.finance.yahoo.com/v8/finance/chart/'
 };
 
 /* ═══════════════════════════════════════════════
-   SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
+   SISTEMA DE NOTIFICACIONES
 ═══════════════════════════════════════════════ */
 const NotificationManager = {
   getStack() {
@@ -50,7 +51,7 @@ const NotificationManager = {
 
   show(type = 'info', title, message, customDuration = null) {
     const stack = this.getStack();
-    
+
     while (stack.children.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
       stack.removeChild(stack.firstChild);
     }
@@ -93,11 +94,12 @@ const NotificationManager = {
 };
 
 /* ═══════════════════════════════════════════════
-   ESTADO GLOBAL DE LA APLICACIÓN (STATE)
+   ESTADO GLOBAL
 ═══════════════════════════════════════════════ */
 const State = {
   positions: [],
   bondsDb: [],
+  localStocksDb: [],   // ← NEW: Rava Argentine stocks cache
   mepPrice: CONFIG.DEFAULT_MEP,
   activeType: 'ALL',
   activeRange: '1M',
@@ -108,7 +110,7 @@ const State = {
 };
 
 /* ═══════════════════════════════════════════════
-   MANEJO DE ALMACENAMIENTO (LOCAL STORAGE)
+   ALMACENAMIENTO
 ═══════════════════════════════════════════════ */
 const Storage = {
   get(key, fallback = []) {
@@ -130,14 +132,12 @@ const Storage = {
 };
 
 /* ═══════════════════════════════════════════════
-   MÓDULO DE ADQUISICIÓN DE PRECIOS & PROXY
+   PROXY & FETCH
 ═══════════════════════════════════════════════ */
 async function fetchWithProxy(baseUrl, params = {}) {
   const urlObj = new URL(baseUrl);
   Object.keys(params).forEach(key => urlObj.searchParams.append(key, params[key]));
-  
   const proxyUrl = `${CONFIG.PROXY}?url=${encodeURIComponent(urlObj.toString())}`;
-  
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -157,11 +157,35 @@ async function getMepPrice() {
   State.mepPrice = CONFIG.DEFAULT_MEP;
 }
 
+/* ═══════════════════════════════════════════════
+   SINCRONIZACIÓN DE ACCIONES LOCALES (RAVA)
+   Carga el panel de acciones del mercado argentino
+   para resolver tickers como ALUA, BYMA, GGAL, etc.
+═══════════════════════════════════════════════ */
+async function syncLocalStocks() {
+  try {
+    const res = await fetchWithProxy(API.RAVA_STOCKS);
+    // Rava devuelve { datos: [...] }
+    const raw = res?.datos || res?.data || [];
+    State.localStocksDb = raw.map(s => ({
+      symbol: (s.especie || s.symbol || '').toUpperCase(),
+      name: s.nombre || s.name || '',
+      price: Number(s.precio || s.price || 0),
+      change: Number(s.variacion || s.change || 0)
+    })).filter(s => s.symbol && s.price > 0);
+    console.log(`[API] Sincronizadas ${State.localStocksDb.length} acciones locales (Rava).`);
+  } catch (e) {
+    console.warn('[API] No se pudo sincronizar acciones locales desde Rava:', e.message);
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   MOTOR DE PRECIOS — con fallback AR inteligente
+═══════════════════════════════════════════════ */
 async function getPrice(ticker, type) {
   const cache = Storage.get(CONFIG.LS_CACHE, {});
   const now = Date.now();
 
-  // Si el caché es válido y el precio no es cero, usarlo
   if (cache[ticker] && (now - cache[ticker].ts < CONFIG.CACHE_TTL) && cache[ticker].price > 0) {
     return cache[ticker];
   }
@@ -171,20 +195,23 @@ async function getPrice(ticker, type) {
   let name = ticker;
 
   try {
+    // ── 1. BONOS: base de datos local de Rava ──────────────────────────────
     if (type === 'BONO') {
       const b = State.bondsDb.find(x => x.symbol.toUpperCase() === ticker.toUpperCase());
       if (b) {
         price = b.price;
-        change = b.tir; 
+        change = b.tir;
         name = b.name;
       } else {
-        throw new Error('Bono no mapeado en base de datos local');
+        throw new Error('Bono no encontrado en base de datos local');
       }
-    } 
+    }
+
+    // ── 2. CRYPTO: CoinGecko ───────────────────────────────────────────────
     else if (type === 'CRYPTO') {
-      const idMap = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'USDT': 'tether' };
+      const idMap = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'USDT': 'tether', 'SOL': 'solana', 'BNB': 'binancecoin' };
       const id = idMap[ticker.toUpperCase()] || ticker.toLowerCase();
-      
+
       const data = await fetchWithProxy(API.COINGECKO, {
         ids: id,
         vs_currencies: 'usd',
@@ -195,37 +222,58 @@ async function getPrice(ticker, type) {
         price = data[id].usd;
         change = data[id].usd_24h_change || 0;
       } else {
-        throw new Error('Formato Crypto inválido');
+        throw new Error('Crypto no encontrada en CoinGecko');
       }
-    } 
-    else { // ACCION / CEDEAR / GLOBAL
+    }
+
+    // ── 3. ACCIONES LOCALES AR: primero Rava, luego Yahoo como fallback ────
+    else if (type === 'AR') {
+      const local = State.localStocksDb.find(s => s.symbol === ticker.toUpperCase());
+      if (local && local.price > 0) {
+        price = local.price;
+        change = local.change;
+        name = local.name || ticker;
+      } else {
+        // Fallback: intentar Yahoo con sufijo .BA (Buenos Aires)
+        const symbol = ticker.toUpperCase() + '.BA';
+        const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, { interval: '1d', range: '2d' });
+        const result = data?.chart?.result?.[0];
+        if (result) {
+          const meta = result.meta;
+          const closes = (result.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+          if (closes.length > 0) {
+            price = closes[closes.length - 1];
+            change = closes.length > 1
+              ? ((closes[closes.length - 1] - closes[closes.length - 2]) / closes[closes.length - 2]) * 100
+              : (meta?.regularMarketChangePercent || 0);
+          } else if (meta?.regularMarketPrice) {
+            price = meta.regularMarketPrice;
+            change = meta.regularMarketChangePercent || 0;
+          }
+          if (meta?.shortName) name = meta.shortName;
+        }
+        if (price === 0) throw new Error(`${ticker} no encontrado ni en Rava ni en Yahoo (.BA)`);
+      }
+    }
+
+    // ── 4. ACCIONES INTERNACIONALES (USD): Yahoo Finance ──────────────────
+    else {
       let symbol = ticker.toUpperCase();
-      
-      // Auto-corrección de typo común de Apple
-      if (symbol === 'APPL') symbol = 'AAPL';
+      if (symbol === 'APPL') symbol = 'AAPL'; // typo común
 
-      const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, {
-        interval: '1d',
-        range: '2d'
-      });
-
+      const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, { interval: '1d', range: '2d' });
       const result = data?.chart?.result?.[0];
+
       if (result) {
         const meta = result.meta;
-        const indicators = result.indicators?.quote?.[0];
-        const prices = indicators?.close || [];
-        const cleanPrices = prices.filter(v => v !== null && v !== undefined);
-        
-        // Estrategia de recuperación para mercados fuera de hora o globales
-        if (cleanPrices.length > 0) {
-          price = cleanPrices[cleanPrices.length - 1];
-          if (cleanPrices.length > 1) {
-            const prev = cleanPrices[cleanPrices.length - 2];
-            change = ((price - prev) / prev) * 100;
-          } else if (meta?.regularMarketChangePercent !== undefined) {
-            change = meta.regularMarketChangePercent;
-          }
-        } else if (meta?.regularMarketPrice !== undefined) {
+        const closes = (result.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+
+        if (closes.length > 0) {
+          price = closes[closes.length - 1];
+          change = closes.length > 1
+            ? ((closes[closes.length - 1] - closes[closes.length - 2]) / closes[closes.length - 2]) * 100
+            : (meta?.regularMarketChangePercent || 0);
+        } else if (meta?.regularMarketPrice != null) {
           price = meta.regularMarketPrice;
           change = meta.regularMarketChangePercent || 0;
         } else {
@@ -238,19 +286,20 @@ async function getPrice(ticker, type) {
       }
     }
 
-    const updatedAsset = { price, change, name, ts: now };
-    cache[ticker] = updatedAsset;
+    const asset = { price, change, name, ts: now };
+    cache[ticker] = asset;
     Storage.set(CONFIG.LS_CACHE, cache);
-    return updatedAsset;
+    return asset;
 
   } catch (err) {
     console.error(`⚠️ Error obteniendo ${ticker}:`, err.message);
+    // Devolver caché stale si existe, o valores cero
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
 
 /* ═══════════════════════════════════════════════
-   CÁLCULOS METÁLICOS Y PROCESAMIENTO (CORREGIDO)
+   CÁLCULOS & PROCESAMIENTO
 ═══════════════════════════════════════════════ */
 async function processPositions() {
   const processed = [];
@@ -258,11 +307,11 @@ async function processPositions() {
 
   for (const pos of State.positions) {
     const live = await getPrice(pos.ticker, pos.type);
-    
+
     let currentPriceUSD = live.price;
     let ppcUSD = pos.ppc;
 
-    // 💡 Corrección Matemática Crítica: Normalización limpia a dólares uniformes
+    // Normalización a USD: ARS → USD vía MEP
     if (pos.currency === 'ARS') {
       currentPriceUSD = live.price / State.mepPrice;
       ppcUSD = pos.ppc / State.mepPrice;
@@ -270,7 +319,6 @@ async function processPositions() {
 
     const subtotalUSD = currentPriceUSD * pos.qty;
     const capitalInvertidoUSD = ppcUSD * pos.qty;
-    
     const pnlAbsUSD = subtotalUSD - capitalInvertidoUSD;
     const pnlPct = capitalInvertidoUSD > 0 ? (pnlAbsUSD / capitalInvertidoUSD) * 100 : 0;
 
@@ -294,7 +342,7 @@ async function processPositions() {
 }
 
 /* ═══════════════════════════════════════════════
-   SISTEMA DE RENDERIZADO & UI DYNAMICS
+   RENDERIZADO
 ═══════════════════════════════════════════════ */
 const $ = (id) => document.getElementById(id);
 
@@ -316,12 +364,39 @@ function triggerReflow(el) {
 
 async function renderAll() {
   const { processed, totalUSD } = await processPositions();
-  
-  $('totalUSD').textContent = formatUSD(totalUSD);
-  $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
-  $('mepValue').textContent = formatARS(State.mepPrice);
 
+  // FIX: usar optional chaining para evitar null crash si un elemento no existe en el DOM
+  const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
+
+  set('totalUSD', formatUSD(totalUSD));
+  set('totalARS', formatARS(totalUSD * State.mepPrice));
+  set('mepValue', formatARS(State.mepPrice)); // sólo actúa si el elemento existe
+
+  // Métricas del header
+  const totalInvested = processed.reduce((acc, p) => {
+    const ppcUSD = p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc;
+    return acc + ppcUSD * p.qty;
+  }, 0);
+  const totalGain = totalUSD - totalInvested;
+  const totalGainPct = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
+
+  // Mejor/peor variación del día
+  const withChange = processed.filter(p => p.type !== 'BONO');
+  const best = withChange.reduce((a, b) => Math.abs(b.change) > Math.abs(a?.change || 0) ? b : a, null);
+
+  set('totalGain', formatUSD(totalGain));
+  set('totalGainPct', formatPct(totalGainPct));
+  set('posCount', processed.length);
+  if (best) {
+    set('bestTicker', best.ticker.toUpperCase());
+    set('bestPct', formatPct(best.change));
+    const bestPctEl = $('bestPct');
+    if (bestPctEl) bestPctEl.className = `metric-sub ${best.change >= 0 ? 'up' : 'down'}`;
+  }
+
+  // Tabla de posiciones
   const tbody = $('posTable');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
@@ -332,7 +407,6 @@ async function renderAll() {
     filtered.forEach((p, index) => {
       const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
       const tr = document.createElement('tr');
-      
       const changeClass = p.change >= 0 ? 'up' : 'down';
       const pnlClass = p.pnlAbsUSD >= 0 ? 'up' : 'down';
 
@@ -367,33 +441,26 @@ async function renderAll() {
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RENDERIZADO DE GRÁFICOS
+   GRÁFICOS
 ═══════════════════════════════════════════════ */
 function renderDonutChart(items) {
-  const ctx = $('donutChart');
+  // index.html usa id="pieChart", script original usaba id="donutChart" — soportar ambos
+  const ctx = $('pieChart') || $('donutChart');
   if (!ctx) return;
 
   if (State.charts.donut) State.charts.donut.destroy();
-  if (items.length === 0) {
-    ctx.style.display = 'none';
-    return;
-  }
+  if (items.length === 0) { ctx.style.display = 'none'; return; }
   ctx.style.display = 'block';
 
   const labels = items.map(x => x.ticker.toUpperCase());
   const data = items.map(x => x.subtotalUSD);
-
-  const colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8'];
+  const colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#7c3aed', '#2e9b6b'];
 
   State.charts.donut = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels,
-      datasets: [{
-        data,
-        backgroundColor: colors.slice(0, labels.length),
-        borderWidth: 0
-      }]
+      datasets: [{ data, backgroundColor: colors.slice(0, labels.length), borderWidth: 0 }]
     },
     options: {
       responsive: true,
@@ -419,7 +486,7 @@ function renderLineChart() {
   let data = filteredHistory.map(h => h.value);
 
   if (labels.length === 0) {
-    labels = Array.from({ length: 5 }, (_, i) => `Punto ${i+1}`);
+    labels = Array.from({ length: 5 }, (_, i) => `Punto ${i + 1}`);
     data = [1000, 1200, 1150, 1300, 1420];
   }
 
@@ -448,7 +515,7 @@ function renderLineChart() {
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RIESGO DE INTELIGENCIA ARTIFICIAL
+   MOTOR DE RIESGO
 ═══════════════════════════════════════════════ */
 function runRiskEngine(processedPositions) {
   const alertsContainer = $('riskAlerts');
@@ -461,18 +528,10 @@ function runRiskEngine(processedPositions) {
   processedPositions.forEach(p => {
     const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
     if (share > 40 && processedPositions.length > 1) {
-      alerts.push({
-        type: 'warning',
-        title: 'Alta Concentración',
-        desc: `El activo **${p.ticker.toUpperCase()}** representa el ${share.toFixed(1)}% de tu cartera.`
-      });
+      alerts.push({ type: 'warning', title: 'Alta Concentración', desc: `${p.ticker.toUpperCase()} representa el ${share.toFixed(1)}% de la cartera.` });
     }
     if (p.pnlPct < -15) {
-      alerts.push({
-        type: 'danger',
-        title: 'Alerta Stop-Loss Crítico',
-        desc: `El activo **${p.ticker.toUpperCase()}** acumula una caída del ${p.pnlPct.toFixed(1)}%.`
-      });
+      alerts.push({ type: 'danger', title: 'Alerta Stop-Loss Crítico', desc: `${p.ticker.toUpperCase()} acumula una caída del ${p.pnlPct.toFixed(1)}%.` });
     }
   });
 
@@ -480,7 +539,6 @@ function runRiskEngine(processedPositions) {
     alertsContainer.innerHTML = `<div class="no-risk">✓ Todos los parámetros de riesgo estables.</div>`;
     return;
   }
-
   alerts.forEach(a => {
     const box = document.createElement('div');
     box.className = `risk-box ${a.type}`;
@@ -490,7 +548,7 @@ function runRiskEngine(processedPositions) {
 }
 
 /* ═══════════════════════════════════════════════
-   WIDGET DE BONOS INTELIGENTES
+   WIDGET BONOS
 ═══════════════════════════════════════════════ */
 async function renderBondsInsightWidget() {
   const container = $('bondsInsightContainer');
@@ -500,18 +558,16 @@ async function renderBondsInsightWidget() {
     const res = await fetch(API.BONDS_TOP_TIR);
     if (!res.ok) throw new Error('Error al consultar el top de TIR');
     const json = await res.json();
-    
+
     if (json.success && json.data) {
       const topBonds = json.data.slice(0, 4);
       let html = '<div class="bonds-insight-grid">';
-      
       topBonds.forEach(b => {
         html += `
           <div class="bond-insight-card">
             <div class="bond-insight-sym">${b.symbol}</div>
             <div class="bond-insight-metric">TIR: <span class="up">${b.tir.toFixed(1)}%</span></div>
-          </div>
-        `;
+          </div>`;
       });
       html += '</div>';
       container.innerHTML = html;
@@ -522,46 +578,70 @@ async function renderBondsInsightWidget() {
 }
 
 /* ═══════════════════════════════════════════════
-   MANEJO DE EVENTOS Y FORMULARIOS (HANDLERS)
+   FORMULARIO — AGREGAR POSICIÓN
+   Tipo de activo mapeado:
+     ar     → type: 'AR'      currency: 'ARS'
+     usd    → type: 'ACCION'  currency: 'USD'
+     crypto → type: 'CRYPTO'  currency: 'USD'
+   Bonos: el usuario selecciona 'ar' y el ticker
+   coincide con la bondsDb → se guarda como 'BONO'
 ═══════════════════════════════════════════════ */
-async function handleAdd(e) {
-  e.preventDefault();
+async function handleAdd() {
   const errorDiv = $('addError');
-  errorDiv.textContent = '';
+  if (errorDiv) errorDiv.textContent = '';
 
-  const ticker = $('tickerInput').value.trim().toUpperCase();
-  const qty = parseFloat($('qtyInput').value);
-  const ppc = parseFloat($('ppcInput').value);
-  const days = parseInt($('daysInput').value) || 0;
-  
+  const ticker = $('tickerInput')?.value.trim().toUpperCase();
+  const qty = parseFloat($('qtyInput')?.value);
+  const ppc = parseFloat($('avgInput')?.value || $('ppcInput')?.value);
+  const days = parseInt($('daysInput')?.value) || 0;
+
   const typeActiveBtn = document.querySelector('.type-btn.active');
-  const type = typeActiveBtn ? typeActiveBtn.dataset.type : 'ACCION';
-  const currency = $('currencySelect').value;
+  const rawType = typeActiveBtn ? typeActiveBtn.dataset.type : 'usd';
+
+  // Determinar currency y type interno
+  let currency = 'USD';
+  let type = 'ACCION';
+
+  if (rawType === 'ar') {
+    currency = 'ARS';
+    // Si el ticker coincide con algún bono conocido, usar tipo BONO
+    const isBond = State.bondsDb.some(b => b.symbol.toUpperCase() === ticker);
+    type = isBond ? 'BONO' : 'AR';
+  } else if (rawType === 'crypto') {
+    type = 'CRYPTO';
+    currency = 'USD';
+  } else {
+    type = 'ACCION';
+    currency = 'USD';
+  }
 
   if (!ticker || isNaN(qty) || qty <= 0 || isNaN(ppc) || ppc <= 0) {
-    errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
+    if (errorDiv) errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
     return;
   }
 
   const newPosition = { ticker, type, qty, ppc, currency, days };
   State.positions.push(newPosition);
   Storage.set(CONFIG.LS_POSITIONS, State.positions);
-  
-  // Limpiar caché específico del activo al añadirlo para forzar actualización fresca
+
+  // Limpiar caché del ticker para forzar precio fresco
   const cache = Storage.get(CONFIG.LS_CACHE, {});
   delete cache[ticker];
-  if(ticker === 'APPL' || ticker === 'AAPL') { delete cache['APPL']; delete cache['AAPL']; }
   Storage.set(CONFIG.LS_CACHE, cache);
 
-  $('tickerInput').value = '';
-  $('qtyInput').value = '';
-  $('ppcInput').value = '';
-  $('daysInput').value = '0';
+  if ($('tickerInput')) $('tickerInput').value = '';
+  if ($('qtyInput')) $('qtyInput').value = '';
+  const ppcField = $('avgInput') || $('ppcInput');
+  if (ppcField) ppcField.value = '';
+  if ($('daysInput')) $('daysInput').value = '0';
 
-  NotificationManager.show('success', 'Posición Añadida', `Se integró **${ticker}** de forma exitosa.`);
+  NotificationManager.show('success', 'Posición Añadida', `${ticker} integrado como ${type} (${currency}).`);
   await renderAll();
 }
 
+/* ═══════════════════════════════════════════════
+   CONTROLES DE SEGMENTACIÓN
+═══════════════════════════════════════════════ */
 function injectControls() {
   const container = $('controlsContainer');
   if (!container) return;
@@ -572,7 +652,8 @@ function injectControls() {
         <div class="card-title">Filtro de Segmentación</div>
         <div class="filter-row">
           <button class="filter-btn active" data-filter="ALL">Todos</button>
-          <button class="filter-btn" data-filter="ACCION">Acciones/CEDEARs</button>
+          <button class="filter-btn" data-filter="ACCION">Acciones Internacionales</button>
+          <button class="filter-btn" data-filter="AR">Acciones Locales</button>
           <button class="filter-btn" data-filter="BONO">Bonos soberanos</button>
           <button class="filter-btn" data-filter="CRYPTO">Criptoactivos</button>
         </div>
@@ -590,6 +671,9 @@ function injectControls() {
   });
 }
 
+/* ═══════════════════════════════════════════════
+   RELOJES
+═══════════════════════════════════════════════ */
 function initClocks() {
   const updateClocks = () => {
     const options = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
@@ -601,11 +685,12 @@ function initClocks() {
 }
 
 /* ═══════════════════════════════════════════════
-   PUNTO DE ENTRADA INICIALIZADOR (DOM READY)
+   INICIALIZACIÓN
 ═══════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
   initClocks();
-  
+
+  // 1. Sincronizar bonos
   try {
     const bondsRes = await fetch(API.BONDS_DATA);
     if (!bondsRes.ok) throw new Error('Error al sincronizar base de datos de bonos');
@@ -615,30 +700,43 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log(`[API] Sincronizados ${State.bondsDb.length} bonos en memoria.`);
     }
   } catch (e) {
-    console.error('Error inicial:', e);
+    console.error('Error inicial bonos:', e);
     NotificationManager.show('error', 'Fallo de sincronización', 'No se pudo conectar con el motor de bonos.');
   }
 
+  // 2. Sincronizar acciones locales argentinas (Rava)
+  await syncLocalStocks();
+
+  // 3. Tipo de cambio MEP
   await getMepPrice();
+
+  // 4. Cargar posiciones del storage
   State.positions = Storage.get(CONFIG.LS_POSITIONS, []);
-  
+
+  // 5. Registrar snapshot de historia
   const history = Storage.get(CONFIG.LS_HISTORY, []);
   const todayStr = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
   const { totalUSD } = await processPositions();
-  
   if (totalUSD > 0 && (!history.length || history[history.length - 1].date !== todayStr)) {
     history.push({ date: todayStr, value: totalUSD });
     if (history.length > CONFIG.HISTORY_MAX) history.shift();
     Storage.set(CONFIG.LS_HISTORY, history);
   }
 
+  // 6. Render
   await renderAll();
   injectControls();
-  
   if ($('bondsInsightContainer')) await renderBondsInsightWidget();
 
-  $('addBtn').onclick = handleAdd;
+  // 7. Eventos del formulario
+  const addBtn = $('addBtn');
+  if (addBtn) addBtn.onclick = handleAdd;
 
+  // Compatibilidad con el formulario que usa onsubmit
+  const addForm = $('addForm');
+  if (addForm) addForm.addEventListener('submit', (e) => { e.preventDefault(); handleAdd(); });
+
+  // Selector de tipo de activo
   document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
@@ -646,6 +744,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // Selector de rango temporal
   document.querySelectorAll('.range-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
@@ -655,6 +754,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // Eliminar posición (global para onclick inline)
   window.deletePos = async (index) => {
     const removed = State.positions[index];
     State.positions.splice(index, 1);
@@ -662,6 +762,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await renderAll();
     NotificationManager.show('info', 'Posición eliminada', `${removed.ticker} removido de la cartera.`, 3500);
   };
-  
+
   NotificationManager.show('info', 'Sistema Listo', 'Motor de riesgo e interfaz sincronizados.', 4000);
 });
