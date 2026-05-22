@@ -42,6 +42,11 @@ let cache = {
   updatedAt: 0
 }
 
+let stocksCache = {
+  data: null,
+  updatedAt: 0
+}
+
 /*
 |--------------------------------------------------------------------------
 | HELPERS / NORMALIZACIÓN
@@ -65,6 +70,43 @@ function normalizeBond(bond) {
     lastUpdateDate: bond.fecha,
     updatedAt: new Date().toISOString()
   }
+}
+
+function normalizeStock(stock) {
+  return {
+    symbol: (stock.especie || '').toUpperCase(),
+    name: stock.nombre || stock.especie || '',
+    price: Number(stock.precio || 0),
+    change: Number(stock.variacion || 0),
+    updatedAt: new Date().toISOString()
+  }
+}
+
+async function fetchStocksFromRava() {
+  const response = await axios.get(
+    'https://mercado.rava.com/api/prices/acciones',
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 10000
+    }
+  )
+  return response.data?.datos || []
+}
+
+async function getStocks() {
+  const now = Date.now()
+  if (stocksCache.data && now - stocksCache.updatedAt < CACHE_DURATION) {
+    return stocksCache.data
+  }
+
+  console.log('Fetching stocks from Rava...')
+  const rawStocks = await fetchStocksFromRava()
+  const normalized = rawStocks
+    .map(normalizeStock)
+    .filter(s => s.symbol && s.price > 0)
+
+  stocksCache = { data: normalized, updatedAt: now }
+  return normalized
 }
 
 async function fetchBondsFromRava() {
@@ -207,7 +249,41 @@ fastify.get('/api/top/paridad', async () => {
 // Limpiar la caché manualmente si fuera necesario
 fastify.post('/api/cache/clear', async () => {
   cache = { data: null, updatedAt: 0 }
+  stocksCache = { data: null, updatedAt: 0 }
   return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
+})
+
+// Obtener todas las acciones locales argentinas
+fastify.get('/api/stocks', async (request, reply) => {
+  try {
+    const stocks = await getStocks()
+    return {
+      success: true,
+      count: stocks.length,
+      updatedAt: new Date(stocksCache.updatedAt).toISOString(),
+      data: stocks
+    }
+  } catch (err) {
+    reply.code(500)
+    return { success: false, error: 'Error al consultar acciones', details: err.message }
+  }
+})
+
+// Obtener una acción local por símbolo (ej: ALUA, BYMA, GGAL)
+fastify.get('/api/stocks/:symbol', async (request, reply) => {
+  try {
+    const { symbol } = request.params
+    const stocks = await getStocks()
+    const stock = stocks.find(s => s.symbol === symbol.toUpperCase())
+    if (!stock) {
+      reply.code(404)
+      return { success: false, error: 'Stock not found' }
+    }
+    return { success: true, data: stock }
+  } catch (err) {
+    reply.code(500)
+    return { success: false, error: 'Error al consultar acción', details: err.message }
+  }
 })
 
 /*

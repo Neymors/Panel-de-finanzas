@@ -28,7 +28,7 @@ const CONFIG = {
 const API = {
   BONDS_DATA: '/api/bonds',
   BONDS_TOP_TIR: '/api/top/tir',
-  RAVA_STOCKS: 'https://mercado.rava.com/api/prices/acciones',
+  STOCKS_DATA: '/api/stocks',        // served by our own Fastify endpoint
   DOLARAPI: 'https://dolarapi.com/v1/dolares/bolsa',
   COINGECKO: 'https://api.coingecko.com/api/v3/simple/price',
   YAHOO: 'https://query1.finance.yahoo.com/v8/finance/chart/'
@@ -164,18 +164,14 @@ async function getMepPrice() {
 ═══════════════════════════════════════════════ */
 async function syncLocalStocks() {
   try {
-    const res = await fetchWithProxy(API.RAVA_STOCKS);
-    // Rava devuelve { datos: [...] }
-    const raw = res?.datos || res?.data || [];
-    State.localStocksDb = raw.map(s => ({
-      symbol: (s.especie || s.symbol || '').toUpperCase(),
-      name: s.nombre || s.name || '',
-      price: Number(s.precio || s.price || 0),
-      change: Number(s.variacion || s.change || 0)
-    })).filter(s => s.symbol && s.price > 0);
-    console.log(`[API] Sincronizadas ${State.localStocksDb.length} acciones locales (Rava).`);
+    const res = await fetch(API.STOCKS_DATA);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Respuesta inválida');
+    State.localStocksDb = json.data; // already normalized by server
+    console.log(`[API] Sincronizadas ${State.localStocksDb.length} acciones locales (Rava vía /api/stocks).`);
   } catch (e) {
-    console.warn('[API] No se pudo sincronizar acciones locales desde Rava:', e.message);
+    console.warn('[API] No se pudo sincronizar acciones locales:', e.message);
   }
 }
 
@@ -188,6 +184,18 @@ async function getPrice(ticker, type) {
 
   if (cache[ticker] && (now - cache[ticker].ts < CONFIG.CACHE_TTL) && cache[ticker].price > 0) {
     return cache[ticker];
+  }
+
+  // ── Auto-correct stale localStorage types ─────────────────────────────
+  // Positions saved before v3.2 may have type 'ACCION' for bonds/AR stocks.
+  // Detect by checking the live databases so routing is always correct.
+  if (type !== 'CRYPTO') {
+    const inBondsDb = State.bondsDb.some(b => b.symbol.toUpperCase() === ticker.toUpperCase());
+    if (inBondsDb) type = 'BONO';
+    else if (type !== 'ACCION' || State.localStocksDb.some(s => s.symbol === ticker.toUpperCase())) {
+      // If it's not a known international stock AND it's in our local DB, treat as AR
+      if (State.localStocksDb.some(s => s.symbol === ticker.toUpperCase())) type = 'AR';
+    }
   }
 
   let price = 0;
@@ -355,7 +363,9 @@ function formatARS(val) {
 }
 
 function formatPct(val) {
-  return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
+  const n = Number(val);
+  if (!isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 }
 
 function triggerReflow(el) {
@@ -578,7 +588,37 @@ async function renderBondsInsightWidget() {
 }
 
 /* ═══════════════════════════════════════════════
-   FORMULARIO — AGREGAR POSICIÓN
+   MIGRACIÓN DE TIPOS DE POSICIÓN (localStorage fix)
+   Corrige posiciones guardadas con tipo incorrecto
+   antes de v3.2 (ej: bonos como 'ACCION').
+═══════════════════════════════════════════════ */
+function migratePositionTypes() {
+  let changed = false;
+  State.positions = State.positions.map(pos => {
+    let { type, currency } = pos;
+    const t = pos.ticker.toUpperCase();
+
+    const inBonds = State.bondsDb.some(b => b.symbol.toUpperCase() === t);
+    const inLocalStocks = State.localStocksDb.some(s => s.symbol === t);
+
+    if (inBonds && type !== 'BONO') {
+      type = 'BONO'; currency = 'ARS'; changed = true;
+      console.log(`[Migración] ${t}: ACCION → BONO`);
+    } else if (inLocalStocks && type !== 'AR' && type !== 'BONO') {
+      type = 'AR'; currency = 'ARS'; changed = true;
+      console.log(`[Migración] ${t}: ${pos.type} → AR`);
+    }
+
+    return { ...pos, type, currency };
+  });
+
+  if (changed) {
+    Storage.set(CONFIG.LS_POSITIONS, State.positions);
+    console.log('[Migración] Tipos de posición corregidos y guardados.');
+  }
+}
+
+
    Tipo de activo mapeado:
      ar     → type: 'AR'      currency: 'ARS'
      usd    → type: 'ACCION'  currency: 'USD'
@@ -712,6 +752,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 4. Cargar posiciones del storage
   State.positions = Storage.get(CONFIG.LS_POSITIONS, []);
+
+  // 4b. Corregir tipos de posición guardados con versiones anteriores
+  migratePositionTypes();
 
   // 5. Registrar snapshot de historia
   const history = Storage.get(CONFIG.LS_HISTORY, []);
