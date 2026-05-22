@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
- * Version: 3.3 — Fixed Yahoo .BA Suffix Automation & Defensive formatPct
+ * Version: 3.4 — Zero-Trust Suffix Isolation & Defensive Format Architecture
  */
 'use strict';
 
@@ -198,10 +198,17 @@ async function getPrice(ticker, type) {
       }
     } 
     else { 
-      // Inyección automática del sufijo .BA para acciones argentinas en Yahoo Finance
-      let symbol = ticker.toUpperCase();
-      const posObj = State.positions.find(p => p.ticker.toUpperCase() === symbol);
-      if (posObj && posObj.currency === 'ARS' && !symbol.endsWith('.BA')) {
+      // Intercepción determinista y normalización estricta del símbolo para mercado local (BYMA)
+      let symbol = ticker.toUpperCase().trim();
+      const localTickers = ['ALUA', 'BYMA', 'YPFD', 'PAMP', 'GGAL', 'BMA', 'EDN', 'CEPU', 'TGSU2'];
+      const storedPositions = Storage.get(CONFIG.LS_POSITIONS, []);
+      const matchedStored = storedPositions.find(p => p.ticker.toUpperCase().trim() === symbol);
+      
+      const isLocalAsset = localTickers.includes(symbol) || 
+                          (matchedStored && matchedStored.currency === 'ARS') ||
+                          (State.positions.some(p => p.ticker.toUpperCase().trim() === symbol && p.currency === 'ARS'));
+
+      if (isLocalAsset && !symbol.endsWith('.BA')) {
         symbol = `${symbol}.BA`;
       }
 
@@ -245,7 +252,7 @@ async function getPrice(ticker, type) {
 
   } catch (err) {
     console.error(`⚠️ Error obteniendo ${ticker}:`, err.message);
-    // Solución al crash: Siempre proveer 'change: 0' por defecto si falla la petición
+    // Control de fallos: Se inyecta 'change: 0' para neutralizar interrupciones en cascada de formatPct
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
@@ -318,13 +325,13 @@ function triggerReflow(el) {
 async function renderAll() {
   const { processed, totalUSD } = await processPositions();
   
-  // Mapeo seguro contra el HTML real de Amygdalé
   if ($('totalVal')) $('totalVal').textContent = formatUSD(totalUSD);
   if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
   if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
   if ($('mepValue')) $('mepValue').textContent = formatARS(State.mepPrice);
 
   const tbody = $('posTable');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
@@ -358,9 +365,17 @@ async function renderAll() {
         <td>${share.toFixed(1)}%</td>
         <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
         <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-        <td><button class="action-btn delete" onclick="deletePos(${index})" aria-label="Eliminar posición">✕</button></td>
+        <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
       `;
       tbody.appendChild(tr);
+    });
+
+    // Delegación de eventos adaptada a directrices de semántica limpia sin manipuladores inline
+    tbody.querySelectorAll('.action-btn.delete').forEach(btn => {
+      btn.onclick = async (e) => {
+        const idx = parseInt(e.currentTarget.dataset.index);
+        await window.deletePos(idx);
+      };
     });
   }
 
@@ -453,7 +468,7 @@ function renderLineChart() {
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RIESGO DE INTELIGENCIA ARTIFICIAL
+   MOTOR DE RIESGO DE CARTERA
 ═══════════════════════════════════════════════ */
 function runRiskEngine(processedPositions) {
   const alertsContainer = $('riskAlerts');
@@ -532,18 +547,25 @@ async function renderBondsInsightWidget() {
 async function handleAdd(e) {
   e.preventDefault();
   const errorDiv = $('addError');
-  errorDiv.textContent = '';
+  if (errorDiv) errorDiv.textContent = '';
 
-  const ticker = $('tickerInput').value.trim().toUpperCase();
-  const qty = parseFloat($('qtyInput').value);
-  const ppc = parseFloat($('avgInput').value);
-  const days = parseInt($('daysInput').value) || 0;
+  const tickerInput = $('tickerInput');
+  const qtyInput = $('qtyInput');
+  const avgInput = $('avgInput');
+  const daysInput = $('daysInput');
+
+  if (!tickerInput || !qtyInput || !avgInput) return;
+
+  const ticker = tickerInput.value.trim().toUpperCase();
+  const qty = parseFloat(qtyInput.value);
+  const ppc = parseFloat(avgInput.value);
+  const days = parseInt(daysInput ? daysInput.value : 0) || 0;
   
   const typeActiveBtn = document.querySelector('.type-btn.active');
   const rawType = typeActiveBtn ? typeActiveBtn.dataset.type : 'usd';
 
   if (!ticker || isNaN(qty) || qty <= 0 || isNaN(ppc) || ppc <= 0) {
-    errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
+    if (errorDiv) errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
     return;
   }
 
@@ -564,13 +586,12 @@ async function handleAdd(e) {
   
   const cache = Storage.get(CONFIG.LS_CACHE, {});
   delete cache[ticker];
-  if (ticker === 'APPL' || ticker === 'AAPL') { delete cache['APPL']; delete cache['AAPL']; }
   Storage.set(CONFIG.LS_CACHE, cache);
 
-  $('tickerInput').value = '';
-  $('qtyInput').value = '';
-  $('avgInput').value = '';
-  $('daysInput').value = '0';
+  tickerInput.value = '';
+  qtyInput.value = '';
+  avgInput.value = '';
+  if (daysInput) daysInput.value = '0';
 
   NotificationManager.show('success', 'Posición Añadida', `Se integró **${ticker}** de forma exitosa.`);
   await renderAll();
@@ -651,7 +672,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   if ($('bondsInsightContainer')) await renderBondsInsightWidget();
 
-  $('addBtn').onclick = handleAdd;
+  const addBtn = $('addBtn');
+  if (addBtn) addBtn.onclick = handleAdd;
 
   document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -670,6 +692,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   window.deletePos = async (index) => {
+    if (index < 0 || index >= State.positions.length) return;
     const removed = State.positions[index];
     State.positions.splice(index, 1);
     Storage.set(CONFIG.LS_POSITIONS, State.positions);
