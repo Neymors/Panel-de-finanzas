@@ -33,9 +33,9 @@ const API = {
   YAHOO: 'https://query1.finance.yahoo.com/v8/finance/chart/'
 };
 
-/* ═══════════════════════════════════════════════
-   SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
-═══════════════════════════════════════════════ */
+const tickerInput = document.getElementById('tickerInput');
+const suggestionBox = document.getElementById('suggestionBox');
+
 /* ═══════════════════════════════════════════════
    SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
 ═══════════════════════════════════════════════ */

@@ -591,6 +591,30 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   }
 }
 
+.suggestion-box {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  z-index: 1000;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+.suggestion-item {
+  padding: var(--space-sm);
+  cursor: pointer;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.suggestion-item:hover {
+  background: var(--bg-surface-hover);
+}
+
 /* ═══════════════════════════════════════════════════════════
    LAYER 9: FOOTER CONTROLS (Import/Export)
 ═══════════════════════════════════════════════════════════ */

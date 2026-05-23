@@ -101,114 +101,43 @@ async function getBonds() {
 |--------------------------------------------------------------------------
 */
 
-// Forzar explícitamente a que responda el archivo index.html en la raíz
-fastify.get('/', async (request, reply) => {
-  return reply.sendFile('index.html')
-})
+/*
+|--------------------------------------------------------------------------
+| BUSCADOR UNIVERSAL (Acciones, Bonos, Criptos)
+|--------------------------------------------------------------------------
+*/
+fastify.get('/api/search', async (request, reply) => {
+  const { q, type } = request.query; // Ejemplo: /api/search?q=AAPL&type=STOCK
 
-// PROXY ROUTE: Soluciona los errores 404 y decodifica las llamadas externas
-fastify.get('/api/proxy', async (request, reply) => {
-  const { url } = request.query
-
-  if (!url) {
-    reply.code(400)
-    return { success: false, error: 'Falta el parámetro URL en la consulta' }
+  if (!q || q.length < 2) {
+    return { success: false, data: [] };
   }
 
   try {
-    // Decodifica los caracteres especiales (%3A, %2F, ?, =) traídos desde script.js
-    const cleanUrl = decodeURIComponent(url)
-    request.log.info(`Proxying request to: ${cleanUrl}`)
+    let results = [];
 
-    const response = await axios.get(cleanUrl, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-      },
-      timeout: 7000 // Tiempo límite de espera para APIs externas lentas
-    })
-    
-    return response.data
-  } catch (error) {
-    request.log.error(`Error en Proxy para la URL: ${url} ->`, error.message)
-    reply.code(error.response?.status || 500)
-    return { 
-      success: false, 
-      error: 'Error al consultar el recurso externo a través del proxy',
-      details: error.message 
+    if (type === 'CRYPTO') {
+      // Búsqueda en CoinGecko
+      const res = await axios.get(`https://api.coingecko.com/api/v3/search?query=${q}`);
+      results = res.data.coins.map(c => ({ 
+        ticker: c.symbol.toUpperCase(), 
+        name: c.name 
+      }));
+    } else {
+      // Búsqueda en Yahoo Finance (Cubre Acciones y Bonos locales/internacionales)
+      const res = await axios.get(`https://query2.finance.yahoo.com/v1/finance/search?q=${q}`);
+      results = res.data.quotes.map(item => ({
+        ticker: item.symbol,
+        name: item.shortname || item.longname
+      }));
     }
+
+    return { success: true, data: results.slice(0, 6) };
+  } catch (error) {
+    request.log.error('Error en Buscador Universal:', error.message);
+    return { success: false, data: [] };
   }
-})
-
-// Estado de la API
-fastify.get('/api/status', async () => {
-  return {
-    success: true,
-    service: 'Amygdalé Core API',
-    timestamp: new Date().toISOString()
-  }
-})
-
-// Obtener todos los bonos procesados
-fastify.get('/api/bonds', async () => {
-  const bonds = await getBonds()
-  return {
-    success: true,
-    count: bonds.length,
-    updatedAt: new Date(cache.updatedAt).toISOString(),
-    data: bonds
-  }
-})
-
-// Obtener un bono específico por símbolo (ej: AL30)
-fastify.get('/api/bonds/:symbol', async (request, reply) => {
-  const { symbol } = request.params
-  const bonds = await getBonds()
-  const bond = bonds.find((b) => b.symbol.toUpperCase() === symbol.toUpperCase())
-
-  if (!bond) {
-    reply.code(404)
-    return { success: false, error: 'Bond not found' }
-  }
-  return { success: true, data: bond }
-})
-
-// Buscador de bonos
-fastify.get('/api/search/:query', async (request) => {
-  const { query } = request.params
-  const bonds = await getBonds()
-  const results = bonds.filter((bond) => {
-    const q = query.toLowerCase()
-    return bond.symbol.toLowerCase().includes(q) || bond.name.toLowerCase().includes(q)
-  })
-  return { success: true, count: results.length, data: results }
-})
-
-// Top 20 bonos por TIR
-fastify.get('/api/top/tir', async () => {
-  const bonds = await getBonds()
-  const sorted = [...bonds]
-    .filter((b) => !isNaN(b.tir))
-    .sort((a, b) => b.tir - a.tir)
-    .slice(0, 20)
-  return { success: true, count: sorted.length, data: sorted }
-})
-
-// Top 20 bonos por Paridad
-fastify.get('/api/top/paridad', async () => {
-  const bonds = await getBonds()
-  const sorted = [...bonds]
-    .filter((b) => !isNaN(b.paridad))
-    .sort((a, b) => b.paridad - a.paridad)
-    .slice(0, 20)
-  return { success: true, count: sorted.length, data: sorted }
-})
-
-// Limpiar la caché manualmente si fuera necesario
-fastify.post('/api/cache/clear', async () => {
-  cache = { data: null, updatedAt: 0 }
-  return { success: true, message: 'Cache cleared', timestamp: new Date().toISOString() }
-})
+});
 
 /*
 |--------------------------------------------------------------------------

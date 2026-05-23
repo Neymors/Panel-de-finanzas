@@ -26,7 +26,9 @@
                     <span class="clock-sep">|</span>
                     <span id="clockNY">NY --:--:--</span>
                 </div>
-                <div id="sourceRow">Sincronizando cotizaciones...</div>
+                <div class="mep-widget">
+                    Dólar MEP: <span id="mepDisplay">--</span>
+                </div>
             </div>
             <div class="total-block">
                 <div class="total-label">Valor Total (USD)</div>
@@ -94,6 +96,10 @@
 
             <form id="addForm" class="add-form" autocomplete="off">
                 <input type="text" id="tickerInput" placeholder="Nombre" required>
+                    <div class="input-group" style="position: relative;">
+                        <input type="text" id="tickerInput" placeholder="Ticker (ej: AAPL)" required>
+                        <div id="suggestionBox" class="suggestion-box" style="display: none;"></div>
+                    </div>
                 <input type="number" id="qtyInput" placeholder="Cantidad numérica" step="any" min="00000" required>
                 <input type="number" id="avgInput" placeholder="Precio de compra (PPC)" step="any" min="0.0000" required>
                 <input type="number" id="daysInput" placeholder="Días de tenencia" value="0" min="0">
