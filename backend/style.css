@@ -1063,24 +1063,24 @@ canvas {
   }
 }
 /* ═══════════════════════════════════════════════════════════
-LAYER 16: CURRENCY SELECTOR WIDGET — BLOOMBERG STYLE
+LAYER 16: CURRENCY SELECTOR — BELOW TABLE (BLOOMBERG STYLE)
 ═══════════════════════════════════════════════════════════ */
 .currency-selector-widget {
   display: inline-flex;
   align-items: center;
   gap: var(--space-md);
-  margin-top: var(--space-lg);
   padding: var(--space-xs) var(--space-md);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   width: fit-content;
   font-family: var(--font-mono);
-  transition: border-color var(--transition-base);
+  transition: border-color var(--transition-base), transform var(--transition-fast);
 }
 
 .currency-selector-widget:hover {
   border-color: var(--border-medium);
+  transform: translateY(-1px);
 }
 
 .currency-selector-label {
@@ -1149,16 +1149,24 @@ LAYER 16: CURRENCY SELECTOR WIDGET — BLOOMBERG STYLE
   letter-spacing: 0.02em;
 }
 
+/* Columnas de precio limpias */
+.price-display {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* ═══════════════════════════════════════════════════════════
-RESPONSIVE — CURRENCY SELECTOR
+RESPONSIVE
 ═══════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
   .currency-selector-widget {
     width: 100%;
-    justify-content: space-between;
+    justify-content: center;
     padding: var(--space-sm);
   }
-  
   .currency-mep-rate {
     border-left: none;
     padding-left: 0;
@@ -1167,32 +1175,6 @@ RESPONSIVE — CURRENCY SELECTOR
     padding-top: var(--space-xs);
     margin-top: var(--space-xs);
     width: 100%;
-    text-align: right;
-  }
-}
-
-@media (max-width: 480px) {
-  .currency-selector-widget {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-sm);
-  }
-  
-  .currency-toggle {
-    width: 100%;
-    justify-content: center;
-  }
-  
-  .currency-btn {
-    flex: 1;
-  }
-  
-  .currency-mep-rate {
     text-align: center;
-    border: none;
-    padding: 0;
-    margin: 0;
-    border-top: 1px solid var(--border-subtle);
-    padding-top: var(--space-xs);
   }
 }

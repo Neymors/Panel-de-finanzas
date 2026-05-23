@@ -451,25 +451,21 @@ async function renderAll() {
         const displayPPC = toDisplay(p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc);
         const displayPnL = toDisplay(p.pnlAbsUSD);
         const displaySubtotal = toDisplay(p.subtotalUSD);
-
-        tr.innerHTML = `
-          <td><div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div><div class="price-original">${p.type === 'BONO' ? 'BONO' : p.type === 'CRYPTO' ? 'CRYPTO' : 'ACCIÓN'}</div></td>
-          <td>
-            <div class="price-us">${formatDisplay(displayCurrentPrice)}</div>
-            <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
-          </td>
-          <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
-          <td>${p.qty}</td>
-          <td>
-            <div class="price-us">${formatDisplay(displayPPC)}</div>
-            <div class="price-original">${p.currency === 'ARS' ? formatARS(p.ppc) : formatUSD(p.ppc)}</div>
-          </td>
-          <td>${p.days} días</td>
-          <td>${share.toFixed(1)}%</td>
-          <td class="${pnlClass}">${formatDisplay(displayPnL)}</td>
-          <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
-        `;
+      tr.innerHTML = `
+        <td>
+          <div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div>
+          <div class="asset-type">${p.type === 'BONO' ? 'BONO' : p.type === 'CRYPTO' ? 'CRYPTO' : 'ACCIÓN'}</div>
+        </td>
+        <td><div class="price-display">${formatDisplay(displayCurrentPrice)}</div></td>
+        <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
+        <td>${p.qty}</td>
+        <td><div class="price-display">${formatDisplay(displayPPC)}</div></td>
+        <td>${p.days} días</td>
+        <td>${share.toFixed(1)}%</td>
+        <td class="${pnlClass}">${formatDisplay(displayPnL)}</td>
+        <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
+        <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
+      `;
         tbody.appendChild(tr);
       }
     });
