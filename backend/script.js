@@ -62,7 +62,7 @@ const NotificationManager = {
     
     const currentCards = stack.querySelectorAll('.notification-card');
     if (currentCards.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
-      this.dismiss(currentCards);
+      this.dismiss(currentCards[0]);
     }
 
     const card = document.createElement('div');
@@ -283,11 +283,12 @@ async function getPrice(ticker, type) {
         range: '2d'
       });
 
-      // Corrección de acceso a datos de Yahoo
+      // CORRECCIÓN: eliminar punto y coma después de ?.
       const result = data?.chart?.result;
-      if (result) {
-        const meta = result.meta;
-        const indicators = result.indicators?.quote?.;
+      if (result && result.length > 0) {
+        const firstResult = result[0];
+        const meta = firstResult.meta;
+        const indicators = firstResult.indicators?.quote?.[0];
         const prices = indicators?.close || [];
         const cleanPrices = prices.filter(v => v !== null && v !== undefined);
         
@@ -439,7 +440,6 @@ async function renderAll() {
             <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
             <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
           </td>
-  
           <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
           <td>${p.qty}</td>
           <td>
@@ -578,7 +578,7 @@ function renderLineChart(currentTotalUSD = 0) {
     labels = [today];
     data = [currentTotalUSD];
   } else if (labels.length === 1) {
-    labels.push(labels + ' (Actual)');
+    labels.push(labels[0] + ' (Actual)');
     data.push(currentTotalUSD);
   }
 
