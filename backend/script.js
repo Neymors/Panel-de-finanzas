@@ -750,7 +750,14 @@ function renderCurrencySelector() {
   // Insertar en el header, junto al bloque total
   const header = document.querySelector('.header');
   if (header) {
+  const totalBlock = header.querySelector('.total-block');
+  if (totalBlock) {
+    totalBlock.insertAdjacentElement('afterend', widget);
+    widget.style.marginLeft = 'auto';
+    widget.style.marginTop = 'var(--space-sm)';
+  } else {
     header.appendChild(widget);
+  }
   }
 
   // Event listeners

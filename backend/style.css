@@ -1063,89 +1063,136 @@ canvas {
   }
 }
 /* ═══════════════════════════════════════════════════════════
-   LAYER 16: CURRENCY SELECTOR WIDGET
+LAYER 16: CURRENCY SELECTOR WIDGET — BLOOMBERG STYLE
 ═══════════════════════════════════════════════════════════ */
 .currency-selector-widget {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-sm);
-  margin-top: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   width: fit-content;
-  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  transition: border-color var(--transition-base);
+}
+
+.currency-selector-widget:hover {
+  border-color: var(--border-medium);
 }
 
 .currency-selector-label {
-  font-size: 0.72rem;
-  color: var(--text-muted);
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .currency-toggle {
-  display: flex;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.25);
+  display: inline-flex;
+  background: var(--bg-elevated);
   border-radius: var(--radius-sm);
   padding: 2px;
+  border: 1px solid var(--border-subtle);
+  gap: 1px;
 }
 
 .currency-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 14px;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: 4px 14px;
   border: none;
-  border-radius: calc(var(--radius-sm) - 2px);
+  border-radius: calc(var(--radius-sm) - 1px);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
-  background: transparent;
-  color: var(--text-muted);
-  white-space: nowrap;
+  font-size: 0.7rem;
+  font-weight: 500;
   letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  background: transparent;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .currency-btn:hover:not(.active) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--bg-surface-hover);
   color: var(--text-primary);
 }
 
 .currency-btn.active[data-currency="USD"] {
-  background: linear-gradient(135deg, #1a4edb 0%, #2563eb 100%);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.45);
+  background: var(--blue);
+  color: #FFFFFF;
+  box-shadow: 0 1px 4px var(--blue-glow);
 }
 
 .currency-btn.active[data-currency="ARS"] {
-  background: linear-gradient(135deg, #218c5a 0%, #27ae70 100%);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(39, 174, 112, 0.45);
+  background: var(--green);
+  color: #FFFFFF;
+  box-shadow: 0 1px 4px rgba(46, 155, 107, 0.4);
 }
 
 .currency-mep-rate {
-  font-size: 0.68rem;
-  color: var(--text-muted);
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
   font-family: var(--font-mono);
-  opacity: 0.75;
   white-space: nowrap;
+  padding-left: var(--space-md);
+  border-left: 1px solid var(--border-subtle);
+  margin-left: var(--space-xs);
+  opacity: 0.85;
+  letter-spacing: 0.02em;
 }
 
-/* Responsive */
-@media (max-width: 640px) {
+/* ═══════════════════════════════════════════════════════════
+RESPONSIVE — CURRENCY SELECTOR
+═══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
   .currency-selector-widget {
     width: 100%;
     justify-content: space-between;
+    padding: var(--space-sm);
   }
+  
   .currency-mep-rate {
+    border-left: none;
+    padding-left: 0;
+    margin-left: 0;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-xs);
+    margin-top: var(--space-xs);
     width: 100%;
     text-align: right;
+  }
+}
+
+@media (max-width: 480px) {
+  .currency-selector-widget {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+  
+  .currency-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .currency-btn {
+    flex: 1;
+  }
+  
+  .currency-mep-rate {
+    text-align: center;
+    border: none;
+    padding: 0;
+    margin: 0;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-xs);
   }
 }
