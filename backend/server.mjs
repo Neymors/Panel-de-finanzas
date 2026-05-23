@@ -103,6 +103,94 @@ async function getBonds() {
 
 /*
 |--------------------------------------------------------------------------
+| RUTA: GET /api/bonds — Devuelve todos los bonos normalizados
+|--------------------------------------------------------------------------
+*/
+fastify.get('/api/bonds', async (request, reply) => {
+  try {
+    const bonds = await getBonds()
+    return { success: true, data: bonds }
+  } catch (error) {
+    request.log.error('Error en /api/bonds:', error.message)
+    reply.status(502)
+    return { success: false, error: error.message, data: [] }
+  }
+})
+
+/*
+|--------------------------------------------------------------------------
+| RUTA: GET /api/top/tir — Devuelve los top bonos por TIR descendente
+|--------------------------------------------------------------------------
+*/
+fastify.get('/api/top/tir', async (request, reply) => {
+  try {
+    const limit = Math.min(parseInt(request.query.limit) || 10, 50)
+    const bonds = await getBonds()
+    const sorted = [...bonds]
+      .filter(b => b.tir > 0)
+      .sort((a, b) => b.tir - a.tir)
+      .slice(0, limit)
+    return { success: true, data: sorted }
+  } catch (error) {
+    request.log.error('Error en /api/top/tir:', error.message)
+    reply.status(502)
+    return { success: false, error: error.message, data: [] }
+  }
+})
+
+/*
+|--------------------------------------------------------------------------
+| RUTA: GET /api/proxy — Proxy CORS para APIs externas (Yahoo, CoinGecko, DolarAPI)
+|--------------------------------------------------------------------------
+*/
+fastify.get('/api/proxy', async (request, reply) => {
+  const { url } = request.query
+
+  if (!url) {
+    reply.status(400)
+    return { success: false, error: 'Parámetro url requerido' }
+  }
+
+  // Whitelist de dominios permitidos para evitar SSRF
+  const ALLOWED_HOSTS = [
+    'query1.finance.yahoo.com',
+    'query2.finance.yahoo.com',
+    'api.coingecko.com',
+    'dolarapi.com',
+  ]
+
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    reply.status(400)
+    return { success: false, error: 'URL inválida' }
+  }
+
+  if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
+    reply.status(403)
+    return { success: false, error: `Host no permitido: ${parsed.hostname}` }
+  }
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
+      timeout: 10000,
+    })
+    return response.data
+  } catch (error) {
+    const status = error.response?.status || 502
+    request.log.error(`Proxy error [${url}]: ${error.message}`)
+    reply.status(status)
+    return { success: false, error: error.message }
+  }
+})
+
+/*
+|--------------------------------------------------------------------------
 | BUSCADOR UNIVERSAL (Acciones, Bonos, Criptos)
 |--------------------------------------------------------------------------
 */
