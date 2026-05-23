@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
- * Version: 3.4 — Zero-Trust Suffix Isolation & Defensive Format Architecture
+ * Version: 3.5 — Zero-Trust Suffix Isolation & Defensive Format Architecture
  */
 'use strict';
 
@@ -54,41 +54,37 @@ const NotificationManager = {
   },
 
   show(type = 'info', title, message, customDuration = null) {
-    // 1. Prevención de duplicados
     const hash = `${type}|${title}|${message}`;
     if (this.activeHashes.has(hash)) return;
     this.activeHashes.add(hash);
 
     const stack = this.getStack();
     
-    // Controlar máximo de notificaciones visibles
     const currentCards = stack.querySelectorAll('.notification-card');
     if (currentCards.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
-      this.dismiss(currentCards[0]); // Elimina la más antigua
+      this.dismiss(currentCards);
     }
 
-    // 2. Renderizar la nueva notificación
     const card = document.createElement('div');
     card.className = `notification-card ${type}`;
     card.setAttribute('role', 'alert');
-    card.dataset.hash = hash; // Guardamos el hash en el DOM
+    card.dataset.hash = hash;
 
-    const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+    const icons = { success: 'V', error: 'X', warning: '!', info: 'i' };
 
     card.innerHTML = `
-      <div class="notification-icon">${icons[type] || 'ℹ'}</div>
+      <div class="notification-icon">${icons[type] || 'i'}</div>
       <div class="notification-content">
         <div class="notification-title">${title}</div>
         <div class="notification-message">${message}</div>
       </div>
-      <button class="notification-dismiss" aria-label="Cerrar notificación">×</button>
+      <button class="notification-dismiss" aria-label="Cerrar notificación">x</button>
     `;
 
     stack.appendChild(card);
-    triggerReflow(card); // Forzar reflow para la animación
+    triggerReflow(card);
     card.classList.add('visible');
 
-    // 3. Manejo de cierre individual y auto-dismiss
     let dismissTimeout;
     const duration = customDuration || CONFIG.AUTO_DISMISS[type] || 5000;
 
@@ -100,14 +96,12 @@ const NotificationManager = {
 
     dismissTimeout = setTimeout(() => this.dismiss(card), duration);
 
-    // 4. Renderizar botón "Eliminar Todas" si aplica
     this.renderClearAllBtn();
   },
 
   dismiss(card) {
     if (!card || card.classList.contains('removing')) return;
     
-    // Liberar el hash para permitir notificaciones idénticas en el futuro
     this.activeHashes.delete(card.dataset.hash);
     
     card.classList.remove('visible');
@@ -116,7 +110,7 @@ const NotificationManager = {
     card.addEventListener('animationend', () => {
       if (card.parentNode) {
         card.parentNode.removeChild(card);
-        this.renderClearAllBtn(); // Actualizar botón global tras eliminar
+        this.renderClearAllBtn();
       }
     });
   },
@@ -146,6 +140,7 @@ const NotificationManager = {
     }
   }
 };
+
 /* ═══════════════════════════════════════════════
    ESTADO GLOBAL DE LA APLICACIÓN (STATE)
 ═══════════════════════════════════════════════ */
@@ -201,7 +196,6 @@ async function getMepPrice() {
   const displayEl = $('mepDisplay');
   const timeEl = $('mepTime');
   
-  // Estado inicial: Loading
   if (displayEl) {
     displayEl.innerHTML = '<span class="loading-pulse">Calculando...</span>';
   }
@@ -212,7 +206,6 @@ async function getMepPrice() {
       State.mepPrice = Number(data.venta);
       console.log(`[API] Dólar MEP sincronizado: $${State.mepPrice}`);
       
-      // Renderizado exitoso
       if (displayEl) displayEl.textContent = formatARS(State.mepPrice);
       if (timeEl) {
         const now = new Date();
@@ -222,7 +215,6 @@ async function getMepPrice() {
     }
   } catch (e) {
     console.error('Error obteniendo Dólar MEP, usando fallback:', e);
-    // Estado de Error visual
     if (displayEl) {
        displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)} (Fallback)</span>`;
     }
@@ -273,7 +265,6 @@ async function getPrice(ticker, type) {
       }
     } 
     else { 
-      // Intercepción determinista y normalización estricta del símbolo para mercado local (BYMA)
       let symbol = ticker.toUpperCase().trim();
       const localTickers = ['ALUA', 'BYMA', 'YPFD', 'PAMP', 'GGAL', 'BMA', 'EDN', 'CEPU', 'TGSU2'];
       const storedPositions = Storage.get(CONFIG.LS_POSITIONS, []);
@@ -327,7 +318,6 @@ async function getPrice(ticker, type) {
 
   } catch (err) {
     console.error(`Error obteniendo ${ticker}:`, err.message);
-    // Control de fallos: Se inyecta 'change: 0' para neutralizar interrupciones en cascada
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
@@ -402,46 +392,38 @@ function triggerReflow(el) {
 async function renderAll() {
   console.log('[UI] Iniciando renderizado de métricas y tabla...');
 
-  // 1. Inyectar estado "Loading" en los widgets
   const metricIds = ['todayPct', 'todayAbs', 'totalGain', 'totalGainPct', 'bestTicker', 'bestPct', 'posCount', 'totalUSD', 'totalARS'];
   metricIds.forEach(id => {
     const el = $(id);
     if (el) el.innerHTML = '<span class="loading-pulse">Calculando...</span>';
   });
 
-  // 2. Procesar posiciones y filtrar
   const { processed, totalUSD } = await processPositions();
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
 
-  // 3. Variables para acumuladores matemáticos
   let totalInvestedUSD = 0;
   let todayAbsUSD = 0;
   let bestAsset = { ticker: '—', change: -Infinity };
 
-  // 4. Renderizar Tabla y calcular globales
   const tbody = $('posTable');
   if (tbody) tbody.innerHTML = '';
 
   if (filtered.length === 0) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis</td></tr>`;
     bestAsset = { ticker: '—', change: 0 };
   } else {
     filtered.forEach((p, index) => {
-      // Cálculos globales
       const capitalInvertidoPosicionUSD = p.currency === 'ARS' ? (p.ppc / State.mepPrice) * p.qty : p.ppc * p.qty;
       totalInvestedUSD += capitalInvertidoPosicionUSD;
 
-      // Variación diaria (Prevención de división por cero si change es -100%)
       const changeDec = p.change / 100;
       const prevPriceUSD = changeDec === -1 ? p.currentPriceUSD : p.currentPriceUSD / (1 + changeDec);
       todayAbsUSD += (p.currentPriceUSD - prevPriceUSD) * p.qty;
 
-      // Mejor activo
       if (p.change > bestAsset.change) {
         bestAsset = { ticker: p.ticker.toUpperCase(), change: p.change };
       }
 
-      // Renderizado de fila
       if (tbody) {
         const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
         const tr = document.createElement('tr');
@@ -467,7 +449,7 @@ async function renderAll() {
           <td>${share.toFixed(1)}%</td>
           <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
           <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
+          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">X</button></td>
         `;
         tbody.appendChild(tr);
       }
@@ -483,7 +465,6 @@ async function renderAll() {
     }
   }
 
-  // 5. Consolidación matemática final
   const totalGainUSD = totalUSD - totalInvestedUSD;
   const totalGainPct = totalInvestedUSD > 0 ? (totalGainUSD / totalInvestedUSD) * 100 : 0;
   
@@ -492,14 +473,13 @@ async function renderAll() {
 
   console.log(`[Cálculos] Invertido: ${totalInvestedUSD.toFixed(2)} | Actual: ${totalUSD.toFixed(2)} | PnL Día: ${todayAbsUSD.toFixed(2)}`);
 
-  // 6. Imprimir valores en los widgets
   const updateWidget = (id, value, isMonetary = false, isPercentage = false, cssClass = '') => {
     const el = $(id);
     if (!el) return;
     
     if (filtered.length === 0) {
        el.innerHTML = `<span class="metric-empty">${isMonetary ? '$0.00' : (isPercentage ? '0.00%' : '—')}</span>`;
-       el.className = 'metric-val'; // Reseteamos colores si está vacío
+       el.className = 'metric-val';
        return;
     }
 
@@ -509,32 +489,26 @@ async function renderAll() {
     }
   };
 
-  // Header Totales
   if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
   if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
-  if ($('mepValue')) $('mepValue').textContent = formatARS(State.mepPrice);
+  if ($('mepDisplay')) $('mepDisplay').textContent = formatARS(State.mepPrice);
 
-  // Widget 1: Rendimiento Diario
   updateWidget('todayAbs', formatUSD(todayAbsUSD), true);
   updateWidget('todayPct', formatPct(todayPct), false, true, todayPct >= 0 ? 'pos' : 'neg');
 
-  // Widget 2: P&L Total Acumulado
   updateWidget('totalGain', formatUSD(totalGainUSD), true, false, totalGainUSD >= 0 ? 'pos' : 'neg');
   if ($('totalGainPct')) $('totalGainPct').textContent = formatPct(totalGainPct);
 
-  // Widget 3: Mayor Variación Hoy
   updateWidget('bestTicker', bestAsset.ticker);
   if ($('bestPct')) {
     $('bestPct').textContent = filtered.length > 0 ? formatPct(bestAsset.change) : '0.00%';
     $('bestPct').className = `metric-sub ${bestAsset.change >= 0 ? 'up' : 'down'}`;
   }
 
-  // Widget 4: Activos en Cartera
   updateWidget('posCount', filtered.length);
 
-  // 7. Disparar renderizado de gráficos
   renderDonutChart(filtered);
-  renderLineChart(totalUSD); // Pasamos totalUSD para el fallback del gráfico
+  renderLineChart(totalUSD);
   
   if ($('riskAlerts')) {
     runRiskEngine(filtered);
@@ -544,7 +518,45 @@ async function renderAll() {
 /* ═══════════════════════════════════════════════
    MOTOR DE RENDERIZADO DE GRÁFICOS
 ═══════════════════════════════════════════════ */
-// ... (Mantén tu función renderDonutChart intacta aquí) ...
+function renderDonutChart(items) {
+  const ctx = $('pieChart'); 
+  if (!ctx) return;
+
+  if (State.charts.donut) State.charts.donut.destroy();
+  if (items.length === 0) {
+    ctx.style.display = 'none';
+    return;
+  }
+  ctx.style.display = 'block';
+
+  const labels = items.map(x => x.ticker.toUpperCase());
+  const data = items.map(x => x.subtotalUSD);
+  
+  const defaultColors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8'];
+  const bgColors = labels.map((label, i) => {
+    if (label === 'BTC') return '#F7931A';
+    return defaultColors[i % defaultColors.length];
+  });
+
+  State.charts.donut = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: bgColors,
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } }
+      }
+    }
+  });
+}
 
 function renderLineChart(currentTotalUSD = 0) {
   const ctx = $('lineChart');
@@ -559,16 +571,13 @@ function renderLineChart(currentTotalUSD = 0) {
   let labels = filteredHistory.map(h => h.date);
   let data = filteredHistory.map(h => h.value);
 
-  // Fallback: Si no hay historial, NO mostrar datos inventados. 
-  // Mostrar una línea plana con el valor actual o un gráfico vacío.
   if (labels.length === 0) {
     console.log('[Chart] Historial vacío. Mostrando fallback plano.');
     const today = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
     labels = [today];
     data = [currentTotalUSD];
   } else if (labels.length === 1) {
-    // Si solo hay un día, duplicamos el punto para que se dibuje una línea horizontal visible
-    labels.push(labels[0] + ' (Actual)');
+    labels.push(labels + ' (Actual)');
     data.push(currentTotalUSD);
   }
 
@@ -579,12 +588,12 @@ function renderLineChart(currentTotalUSD = 0) {
       datasets: [{
         label: 'Valor Total (USD)',
         data,
-        borderColor: '#2D7EE8', /* Usando tu token --blue */
-        backgroundColor: 'rgba(45, 126, 232, 0.1)',
+        borderColor: '#2962FF',
+        backgroundColor: 'rgba(41, 98, 255, 0.1)',
         borderWidth: 2,
         fill: true,
         tension: 0.15,
-        pointRadius: data.length === 1 ? 4 : 2, // Hacer visible el punto si es uno solo
+        pointRadius: data.length === 1 ? 4 : 2,
       }]
     },
     options: {
@@ -610,86 +619,6 @@ function renderLineChart(currentTotalUSD = 0) {
           }, 
           grid: { color: 'rgba(255, 255, 255, 0.05)' } 
         }
-      }
-    }
-  });
-}
-
-/* ═══════════════════════════════════════════════
-   MOTOR DE RENDERIZADO DE GRÁFICOS
-═══════════════════════════════════════════════ */
-function renderDonutChart(items) {
-  const ctx = $('pieChart'); 
-  if (!ctx) return;
-
-  if (State.charts.donut) State.charts.donut.destroy();
-  if (items.length === 0) {
-    ctx.style.display = 'none';
-    return;
-  }
-  ctx.style.display = 'block';
-
-  const labels = items.map(x => x.ticker.toUpperCase());
-  const data = items.map(x => x.subtotalUSD);
-  const colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8'];
-
-  State.charts.donut = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{
-        data,
-        backgroundColor: colors.slice(0, labels.length),
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } }
-      }
-    }
-  });
-}
-
-function renderLineChart() {
-  const ctx = $('lineChart');
-  if (!ctx) return;
-
-  if (State.charts.line) State.charts.line.destroy();
-
-  const history = Storage.get(CONFIG.LS_HISTORY, []);
-  const filterDays = { '1W': 7, '1M': 30, '3M': 90, 'ALL': CONFIG.HISTORY_MAX }[State.activeRange] || 30;
-  const filteredHistory = history.slice(-filterDays);
-
-  let labels = filteredHistory.map(h => h.date);
-  let data = filteredHistory.map(h => h.value);
-
-  if (labels.length === 0) {
-    labels = Array.from({ length: 5 }, (_, i) => `Punto ${i+1}`);
-    data = [1000, 1200, 1150, 1300, 1420];
-  }
-
-  State.charts.line = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Historial USD',
-        data,
-        borderColor: '#2563eb',
-        borderWidth: 2,
-        fill: false,
-        tension: 0.15
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { ticks: { color: '#64748b' } },
-        y: { ticks: { color: '#64748b' } }
       }
     }
   });
@@ -725,7 +654,7 @@ function runRiskEngine(processedPositions) {
   });
 
   if (alerts.length === 0) {
-    alertsContainer.innerHTML = `<div class="no-risk">✓ Todos los parámetros de riesgo estables.</div>`;
+    alertsContainer.innerHTML = `<div class="no-risk">Todos los parámetros de riesgo estables.</div>`;
     return;
   }
 
