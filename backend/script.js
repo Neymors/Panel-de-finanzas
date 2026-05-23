@@ -283,7 +283,8 @@ async function getPrice(ticker, type) {
         range: '2d'
       });
 
-      const result = data?.chart?.result?.;
+      // Corrección de acceso a datos de Yahoo
+      const result = data?.chart?.result;
       if (result) {
         const meta = result.meta;
         const indicators = result.indicators?.quote?.;
