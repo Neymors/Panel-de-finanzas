@@ -16,6 +16,7 @@ const CONFIG = {
   LS_POSITIONS: 'portfolio_positions_v2',
   LS_CACHE: 'amygdale_price_cache_v1',
   LS_HISTORY: 'amygdale_history_v1',
+  LS_CURRENCY: 'amygdale_base_currency_v1',
   CACHE_TTL: 5 * 60 * 1000,
   DEFAULT_MEP: 1200,
   HISTORY_MAX: 365,
@@ -153,10 +154,29 @@ const State = {
   positions: [],
   bondsDb: [],
   mepPrice: CONFIG.DEFAULT_MEP,
+  baseCurrency: 'USD', // 'USD' | 'ARS'
   activeType: 'ALL',
   activeRange: '1M',
   charts: { donut: null, line: null }
 };
+
+/* ═══════════════════════════════════════════════
+   MONEDA BASE — helpers de conversión
+═══════════════════════════════════════════════ */
+// Convierte un valor USD al display según moneda base
+function toDisplay(usdValue) {
+  return State.baseCurrency === 'ARS' ? usdValue * State.mepPrice : usdValue;
+}
+
+// Formatea un valor ya en moneda display
+function formatDisplay(val) {
+  return State.baseCurrency === 'ARS' ? formatARS(val) : formatUSD(val);
+}
+
+// Símbolo/label de la moneda activa
+function currencyLabel() {
+  return State.baseCurrency === 'ARS' ? 'ARS' : 'USD';
+}
 
 /* ═══════════════════════════════════════════════
    LOCAL STORAGE
@@ -179,6 +199,30 @@ const Storage = {
     }
   }
 };
+
+/* ═══════════════════════════════════════════════
+   UTILIDADES DE FORMATO
+═══════════════════════════════════════════════ */
+const $ = (id) => document.getElementById(id);
+
+function formatUSD(val) {
+  if (val === undefined || val === null || isNaN(val)) return '$0.00';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+}
+
+function formatARS(val) {
+  if (val === undefined || val === null || isNaN(val)) return '$0.00';
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(val);
+}
+
+function formatPct(val) {
+  if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return '0.00%';
+  return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
+}
+
+function triggerReflow(el) {
+  return el.offsetHeight;
+}
 
 /* ═══════════════════════════════════════════════
    PRECIOS & PROXY
@@ -204,6 +248,10 @@ async function getMepPrice() {
     if (data && data.venta) {
       State.mepPrice = Number(data.venta);
       if (displayEl) displayEl.textContent = formatARS(State.mepPrice);
+      
+      // Actualizar tasa en el selector de moneda si está visible
+      const rateEl = document.querySelector('#currency-selector-widget .currency-mep-rate');
+      if (rateEl) rateEl.textContent = `MEP: ${formatARS(State.mepPrice)}`;
       
       const now = new Date();
       const horaArg = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
@@ -358,32 +406,15 @@ async function processPositions() {
 /* ═══════════════════════════════════════════════
    RENDERIZADO UI
 ═══════════════════════════════════════════════ */
-const $ = (id) => document.getElementById(id);
-
-function formatUSD(val) {
-  if (val === undefined || val === null || isNaN(val)) return '$0.00';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
-}
-
-function formatARS(val) {
-  if (val === undefined || val === null || isNaN(val)) return '$0.00';
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(val);
-}
-
-function formatPct(val) {
-  if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return '0.00%';
-  return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
-}
-
-function triggerReflow(el) {
-  return el.offsetHeight;
-}
-
 async function renderAll() {
   console.log('[UI] Renderizando...');
 
   const metricIds = ['todayPct', 'todayAbs', 'totalGain', 'totalGainPct', 'bestTicker', 'bestPct', 'posCount', 'totalUSD', 'totalARS'];
   metricIds.forEach(id => { const el = $(id); if (el) el.innerHTML = '<span class="loading-pulse">Calculando...</span>'; });
+
+  // Actualizar etiqueta del bloque total según moneda activa
+  const totalLabelEl = document.querySelector('.total-label');
+  if (totalLabelEl) totalLabelEl.textContent = `Valor Total (${currencyLabel()})`;
 
   const { processed, totalUSD } = await processPositions();
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
@@ -415,21 +446,27 @@ async function renderAll() {
         const changeClass = p.change >= 0 ? 'up' : 'down';
         const pnlClass = p.pnlAbsUSD >= 0 ? 'up' : 'down';
 
+        // Precios en moneda display
+        const displayCurrentPrice = toDisplay(p.currentPriceUSD);
+        const displayPPC = toDisplay(p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc);
+        const displayPnL = toDisplay(p.pnlAbsUSD);
+        const displaySubtotal = toDisplay(p.subtotalUSD);
+
         tr.innerHTML = `
-          <td><div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div></td>
+          <td><div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div><div class="price-original">${p.type === 'BONO' ? 'BONO' : p.type === 'CRYPTO' ? 'CRYPTO' : 'ACCIÓN'}</div></td>
           <td>
-            <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
+            <div class="price-us">${formatDisplay(displayCurrentPrice)}</div>
             <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
           </td>
           <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
           <td>${p.qty}</td>
           <td>
-            <div class="price-us">${formatUSD(p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc)}</div>
+            <div class="price-us">${formatDisplay(displayPPC)}</div>
             <div class="price-original">${p.currency === 'ARS' ? formatARS(p.ppc) : formatUSD(p.ppc)}</div>
           </td>
           <td>${p.days} días</td>
           <td>${share.toFixed(1)}%</td>
-          <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
+          <td class="${pnlClass}">${formatDisplay(displayPnL)}</td>
           <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
           <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
         `;
@@ -452,15 +489,21 @@ async function renderAll() {
   const prevTotalPortfolioUSD = totalUSD - todayAbsUSD;
   const todayPct = prevTotalPortfolioUSD > 0 ? (todayAbsUSD / prevTotalPortfolioUSD) * 100 : 0;
 
-  if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
-  if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
+  // Totales en moneda base
+  const displayTotal = toDisplay(totalUSD);
+  const displaySecondary = State.baseCurrency === 'ARS'
+    ? formatUSD(totalUSD)
+    : formatARS(totalUSD * State.mepPrice);
+
+  if ($('totalUSD')) $('totalUSD').textContent = formatDisplay(displayTotal);
+  if ($('totalARS')) $('totalARS').textContent = displaySecondary;
   if ($('mepDisplay')) $('mepDisplay').textContent = formatARS(State.mepPrice);
 
   const updateWidget = (id, value, isMonetary = false, isPercentage = false, cssClass = '') => {
     const el = $(id);
     if (!el) return;
     if (filtered.length === 0) {
-      el.innerHTML = `<span class="metric-empty">${isMonetary ? '$0.00' : (isPercentage ? '0.00%' : '—')}</span>`;
+      el.innerHTML = `<span class="metric-empty">${isMonetary ? formatDisplay(0) : (isPercentage ? '0.00%' : '—')}</span>`;
       el.className = 'metric-val';
       return;
     }
@@ -468,9 +511,9 @@ async function renderAll() {
     if (cssClass) el.className = `metric-val ${cssClass}`;
   };
 
-  updateWidget('todayAbs', formatUSD(todayAbsUSD), true);
+  updateWidget('todayAbs', formatDisplay(toDisplay(todayAbsUSD)), true);
   updateWidget('todayPct', formatPct(todayPct), false, true, todayPct >= 0 ? 'pos' : 'neg');
-  updateWidget('totalGain', formatUSD(totalGainUSD), true, false, totalGainUSD >= 0 ? 'pos' : 'neg');
+  updateWidget('totalGain', formatDisplay(toDisplay(totalGainUSD)), true, false, totalGainUSD >= 0 ? 'pos' : 'neg');
   if ($('totalGainPct')) $('totalGainPct').textContent = formatPct(totalGainPct);
   updateWidget('bestTicker', bestAsset.ticker);
   if ($('bestPct')) {
@@ -528,10 +571,10 @@ function renderLineChart(currentTotalUSD = 0) {
 
   State.charts.line = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets: [{ label: 'Valor Total (USD)', data, borderColor: '#2962FF', backgroundColor: 'rgba(41, 98, 255, 0.1)', borderWidth: 2, fill: true, tension: 0.15, pointRadius: data.length === 1 ? 4 : 2 }] },
+    data: { labels, datasets: [{ label: `Valor Total (${currencyLabel()})`, data: data.map(v => toDisplay(v)), borderColor: '#2962FF', backgroundColor: 'rgba(41, 98, 255, 0.1)', borderWidth: 2, fill: true, tension: 0.15, pointRadius: data.length === 1 ? 4 : 2 }] },
     options: {
-      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => formatUSD(ctx.raw) } } },
-      scales: { x: { ticks: { color: '#6E7683', font: { family: 'monospace' } }, grid: { display: false } }, y: { ticks: { color: '#6E7683', font: { family: 'monospace' }, callback: (val) => '$' + val }, grid: { color: 'rgba(255, 255, 255, 0.05)' } } }
+      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => formatDisplay(ctx.raw) } } },
+      scales: { x: { ticks: { color: '#6E7683', font: { family: 'monospace' } }, grid: { display: false } }, y: { ticks: { color: '#6E7683', font: { family: 'monospace' }, callback: (val) => formatDisplay(val) }, grid: { color: 'rgba(255, 255, 255, 0.05)' } } }
     }
   });
 }
@@ -671,10 +714,79 @@ function initClocks() {
 }
 
 /* ═══════════════════════════════════════════════
+   SELECTOR DE MONEDA BASE
+═══════════════════════════════════════════════ */
+function renderCurrencySelector() {
+  // Eliminar instancia previa si existe
+  const existing = document.getElementById('currency-selector-widget');
+  if (existing) existing.remove();
+
+  const widget = document.createElement('div');
+  widget.id = 'currency-selector-widget';
+  widget.className = 'currency-selector-widget';
+  widget.setAttribute('aria-label', 'Selector de moneda base');
+
+  widget.innerHTML = `
+    <span class="currency-selector-label">Ver en:</span>
+    <div class="currency-toggle" role="group" aria-label="Moneda de visualización">
+      <button 
+        class="currency-btn ${State.baseCurrency === 'USD' ? 'active' : ''}" 
+        data-currency="USD" 
+        aria-pressed="${State.baseCurrency === 'USD'}"
+        title="Ver todo en Dólares (USD)">
+        🇺🇸 USD
+      </button>
+      <button 
+        class="currency-btn ${State.baseCurrency === 'ARS' ? 'active' : ''}" 
+        data-currency="ARS" 
+        aria-pressed="${State.baseCurrency === 'ARS'}"
+        title="Ver todo en Pesos Argentinos (ARS) — usa Dólar MEP">
+        🇦🇷 ARS
+      </button>
+    </div>
+    <span class="currency-mep-rate">MEP: ${formatARS(State.mepPrice)}</span>
+  `;
+
+  // Insertar en el header, junto al bloque total
+  const header = document.querySelector('.header');
+  if (header) {
+    header.appendChild(widget);
+  }
+
+  // Event listeners
+  widget.querySelectorAll('.currency-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const selected = btn.dataset.currency;
+      if (selected === State.baseCurrency) return;
+
+      State.baseCurrency = selected;
+      Storage.set(CONFIG.LS_CURRENCY, selected);
+
+      // Actualizar botones
+      widget.querySelectorAll('.currency-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.currency === selected);
+        b.setAttribute('aria-pressed', b.dataset.currency === selected);
+      });
+
+      // Actualizar tasa MEP en el widget
+      const rateEl = widget.querySelector('.currency-mep-rate');
+      if (rateEl) rateEl.textContent = `MEP: ${formatARS(State.mepPrice)}`;
+
+      NotificationManager.show('info', 'Moneda cambiada', `Visualizando en ${selected} — conversión por Dólar MEP.`, 3500);
+      await renderAll();
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════
    INICIALIZACIÓN
 ═══════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
   initClocks();
+
+  // ── Cargar preferencia de moneda base ──────────────────────────────────
+  State.baseCurrency = Storage.get(CONFIG.LS_CURRENCY, 'USD') || 'USD';
+  renderCurrencySelector();
   
   // Cargar base de datos de bonos
   try {
@@ -696,6 +808,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await getMepPrice();
   State.positions = Storage.get(CONFIG.LS_POSITIONS, []);
+
+  // ── Fix: reclasificar posiciones ARS guardadas como ACCION que son BONO ─
+  if (State.bondsDb.length > 0) {
+    let changed = false;
+    State.positions = State.positions.map(pos => {
+      if (pos.currency === 'ARS' && pos.type === 'ACCION') {
+        const isBono = State.bondsDb.some(x => x.symbol.toUpperCase() === pos.ticker.toUpperCase());
+        if (isBono) { changed = true; return { ...pos, type: 'BONO' }; }
+      }
+      return pos;
+    });
+    if (changed) {
+      Storage.set(CONFIG.LS_POSITIONS, State.positions);
+      console.log('[Fix] Posiciones re-clasificadas como BONO.');
+    }
+  }
   
   const history = Storage.get(CONFIG.LS_HISTORY, []);
   const todayStr = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
