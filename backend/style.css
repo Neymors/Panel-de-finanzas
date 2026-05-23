@@ -786,6 +786,45 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   }
 }
 
+/* Botón Limpiar Todas */
+.notif-clear-all-btn {
+  align-self: flex-end;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-xs);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.notif-clear-all-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+}
+
+/* Fix para la animación de salida */
+@keyframes notif-fade-out {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(20px);
+    margin-top: -100px; /* Ayuda a que las demás suban suavemente */
+  }
+}
+
+.notification-card.removing {
+  animation: notif-fade-out 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
 /* ═══════════════════════════════════════════════════════════
    LAYER 11: UTILITIES & MICROINTERACTIONS (Calm & Surgical)
 ═══════════════════════════════════════════════════════════ */
@@ -820,6 +859,27 @@ button:active,
 /* Tooltips and extra */
 [title] {
   cursor: help;
+}
+
+/* Estado de carga para métricas */
+.loading-pulse {
+  display: inline-block;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  animation: pulse-opacity 1.5s infinite ease-in-out;
+  font-family: var(--font-sans);
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Fallback amigable para métricas vacías */
+.metric-empty {
+  color: var(--text-tertiary);
+  font-size: 1.2rem;
+  font-weight: 400;
 }
 
 /* ═══════════════════════════════════════════════════════════

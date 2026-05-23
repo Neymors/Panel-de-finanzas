@@ -36,7 +36,12 @@ const API = {
 /* ═══════════════════════════════════════════════
    SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
 ═══════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════
+   SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
+═══════════════════════════════════════════════ */
 const NotificationManager = {
+  activeHashes: new Set(),
+
   getStack() {
     let stack = document.getElementById('notification-stack');
     if (!stack) {
@@ -49,15 +54,24 @@ const NotificationManager = {
   },
 
   show(type = 'info', title, message, customDuration = null) {
+    // 1. Prevención de duplicados
+    const hash = `${type}|${title}|${message}`;
+    if (this.activeHashes.has(hash)) return;
+    this.activeHashes.add(hash);
+
     const stack = this.getStack();
     
-    while (stack.children.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
-      stack.removeChild(stack.firstChild);
+    // Controlar máximo de notificaciones visibles
+    const currentCards = stack.querySelectorAll('.notification-card');
+    if (currentCards.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
+      this.dismiss(currentCards[0]); // Elimina la más antigua
     }
 
+    // 2. Renderizar la nueva notificación
     const card = document.createElement('div');
     card.className = `notification-card ${type}`;
     card.setAttribute('role', 'alert');
+    card.dataset.hash = hash; // Guardamos el hash en el DOM
 
     const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
 
@@ -67,31 +81,71 @@ const NotificationManager = {
         <div class="notification-title">${title}</div>
         <div class="notification-message">${message}</div>
       </div>
-      <button class="notification-close" aria-label="Cerrar notificación">×</button>
+      <button class="notification-dismiss" aria-label="Cerrar notificación">×</button>
     `;
 
     stack.appendChild(card);
-    triggerReflow(card);
+    triggerReflow(card); // Forzar reflow para la animación
     card.classList.add('visible');
 
-    const closeBtn = card.querySelector('.notification-close');
+    // 3. Manejo de cierre individual y auto-dismiss
     let dismissTimeout;
+    const duration = customDuration || CONFIG.AUTO_DISMISS[type] || 5000;
 
-    const dismiss = () => {
+    const closeBtn = card.querySelector('.notification-dismiss');
+    closeBtn.onclick = () => {
       clearTimeout(dismissTimeout);
-      card.classList.remove('visible');
-      card.classList.add('exit');
-      card.addEventListener('transitionend', () => {
-        if (card.parentNode === stack) stack.removeChild(card);
-      });
+      this.dismiss(card);
     };
 
-    closeBtn.onclick = dismiss;
-    const duration = customDuration || CONFIG.AUTO_DISMISS[type] || 5000;
-    dismissTimeout = setTimeout(dismiss, duration);
+    dismissTimeout = setTimeout(() => this.dismiss(card), duration);
+
+    // 4. Renderizar botón "Eliminar Todas" si aplica
+    this.renderClearAllBtn();
+  },
+
+  dismiss(card) {
+    if (!card || card.classList.contains('removing')) return;
+    
+    // Liberar el hash para permitir notificaciones idénticas en el futuro
+    this.activeHashes.delete(card.dataset.hash);
+    
+    card.classList.remove('visible');
+    card.classList.add('removing');
+    
+    card.addEventListener('animationend', () => {
+      if (card.parentNode) {
+        card.parentNode.removeChild(card);
+        this.renderClearAllBtn(); // Actualizar botón global tras eliminar
+      }
+    });
+  },
+
+  dismissAll() {
+    const stack = this.getStack();
+    const cards = stack.querySelectorAll('.notification-card');
+    cards.forEach(card => this.dismiss(card));
+  },
+
+  renderClearAllBtn() {
+    const stack = this.getStack();
+    const cards = stack.querySelectorAll('.notification-card:not(.removing)');
+    let clearBtn = document.getElementById('notif-clear-all');
+
+    if (cards.length > 1) {
+      if (!clearBtn) {
+        clearBtn = document.createElement('button');
+        clearBtn.id = 'notif-clear-all';
+        clearBtn.className = 'notif-clear-all-btn';
+        clearBtn.textContent = 'Limpiar todas';
+        clearBtn.onclick = () => this.dismissAll();
+        stack.insertBefore(clearBtn, stack.firstChild);
+      }
+    } else if (clearBtn) {
+      clearBtn.remove();
+    }
   }
 };
-
 /* ═══════════════════════════════════════════════
    ESTADO GLOBAL DE LA APLICACIÓN (STATE)
 ═══════════════════════════════════════════════ */
@@ -306,15 +360,17 @@ async function processPositions() {
 const $ = (id) => document.getElementById(id);
 
 function formatUSD(val) {
+  if (val === undefined || val === null || isNaN(val)) return '$0.00';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 }
 
 function formatARS(val) {
+  if (val === undefined || val === null || isNaN(val)) return '$0.00';
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(val);
 }
 
 function formatPct(val) {
-  if (val === undefined || val === null || isNaN(val)) return '0.00%';
+  if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return '0.00%';
   return (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
 }
 
@@ -323,68 +379,219 @@ function triggerReflow(el) {
 }
 
 async function renderAll() {
+  console.log('[UI] Iniciando renderizado de métricas y tabla...');
+
+  // 1. Inyectar estado "Loading" en los widgets
+  const metricIds = ['todayPct', 'todayAbs', 'totalGain', 'totalGainPct', 'bestTicker', 'bestPct', 'posCount', 'totalUSD', 'totalARS'];
+  metricIds.forEach(id => {
+    const el = $(id);
+    if (el) el.innerHTML = '<span class="loading-pulse">Calculando...</span>';
+  });
+
+  // 2. Procesar posiciones y filtrar
   const { processed, totalUSD } = await processPositions();
+  const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
+
+  // 3. Variables para acumuladores matemáticos
+  let totalInvestedUSD = 0;
+  let todayAbsUSD = 0;
+  let bestAsset = { ticker: '—', change: -Infinity };
+
+  // 4. Renderizar Tabla y calcular globales
+  const tbody = $('posTable');
+  if (tbody) tbody.innerHTML = '';
+
+  if (filtered.length === 0) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>`;
+    bestAsset = { ticker: '—', change: 0 };
+  } else {
+    filtered.forEach((p, index) => {
+      // Cálculos globales
+      const capitalInvertidoPosicionUSD = p.currency === 'ARS' ? (p.ppc / State.mepPrice) * p.qty : p.ppc * p.qty;
+      totalInvestedUSD += capitalInvertidoPosicionUSD;
+
+      // Variación diaria (Prevención de división por cero si change es -100%)
+      const changeDec = p.change / 100;
+      const prevPriceUSD = changeDec === -1 ? p.currentPriceUSD : p.currentPriceUSD / (1 + changeDec);
+      todayAbsUSD += (p.currentPriceUSD - prevPriceUSD) * p.qty;
+
+      // Mejor activo
+      if (p.change > bestAsset.change) {
+        bestAsset = { ticker: p.ticker.toUpperCase(), change: p.change };
+      }
+
+      // Renderizado de fila
+      if (tbody) {
+        const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
+        const tr = document.createElement('tr');
+        const changeClass = p.change >= 0 ? 'up' : 'down';
+        const pnlClass = p.pnlAbsUSD >= 0 ? 'up' : 'down';
+
+        tr.innerHTML = `
+          <td>
+            <div class="ticker-main">${p.ticker.toUpperCase()}</div>
+            <div class="asset-name">${p.name || p.ticker}</div>
+          </td>
+          <td>
+            <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
+            <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
+          </td>
+          <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
+          <td>${p.qty}</td>
+          <td>
+            <div class="price-us">${formatUSD(p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc)}</div>
+            <div class="price-original">${p.currency === 'ARS' ? formatARS(p.ppc) : formatUSD(p.ppc)}</div>
+          </td>
+          <td>${p.days} días</td>
+          <td>${share.toFixed(1)}%</td>
+          <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
+          <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
+          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
+        `;
+        tbody.appendChild(tr);
+      }
+    });
+
+    if (tbody) {
+      tbody.querySelectorAll('.action-btn.delete').forEach(btn => {
+        btn.onclick = async (e) => {
+          const idx = parseInt(e.currentTarget.dataset.index);
+          await window.deletePos(idx);
+        };
+      });
+    }
+  }
+
+  // 5. Consolidación matemática final
+  const totalGainUSD = totalUSD - totalInvestedUSD;
+  const totalGainPct = totalInvestedUSD > 0 ? (totalGainUSD / totalInvestedUSD) * 100 : 0;
   
-  if ($('totalVal')) $('totalVal').textContent = formatUSD(totalUSD);
+  const prevTotalPortfolioUSD = totalUSD - todayAbsUSD;
+  const todayPct = prevTotalPortfolioUSD > 0 ? (todayAbsUSD / prevTotalPortfolioUSD) * 100 : 0;
+
+  console.log(`[Cálculos] Invertido: ${totalInvestedUSD.toFixed(2)} | Actual: ${totalUSD.toFixed(2)} | PnL Día: ${todayAbsUSD.toFixed(2)}`);
+
+  // 6. Imprimir valores en los widgets
+  const updateWidget = (id, value, isMonetary = false, isPercentage = false, cssClass = '') => {
+    const el = $(id);
+    if (!el) return;
+    
+    if (filtered.length === 0) {
+       el.innerHTML = `<span class="metric-empty">${isMonetary ? '$0.00' : (isPercentage ? '0.00%' : '—')}</span>`;
+       el.className = 'metric-val'; // Reseteamos colores si está vacío
+       return;
+    }
+
+    el.textContent = value;
+    if (cssClass) {
+      el.className = `metric-val ${cssClass}`;
+    }
+  };
+
+  // Header Totales
   if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
   if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
   if ($('mepValue')) $('mepValue').textContent = formatARS(State.mepPrice);
 
-  const tbody = $('posTable');
-  if (!tbody) return;
-  tbody.innerHTML = '';
+  // Widget 1: Rendimiento Diario
+  updateWidget('todayAbs', formatUSD(todayAbsUSD), true);
+  updateWidget('todayPct', formatPct(todayPct), false, true, todayPct >= 0 ? 'pos' : 'neg');
 
-  const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
+  // Widget 2: P&L Total Acumulado
+  updateWidget('totalGain', formatUSD(totalGainUSD), true, false, totalGainUSD >= 0 ? 'pos' : 'neg');
+  if ($('totalGainPct')) $('totalGainPct').textContent = formatPct(totalGainPct);
 
-  if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>`;
-  } else {
-    filtered.forEach((p, index) => {
-      const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
-      const tr = document.createElement('tr');
-      
-      const changeClass = p.change >= 0 ? 'up' : 'down';
-      const pnlClass = p.pnlAbsUSD >= 0 ? 'up' : 'down';
-
-      tr.innerHTML = `
-        <td>
-          <div class="ticker-main">${p.ticker.toUpperCase()}</div>
-          <div class="asset-name">${p.name || p.ticker}</div>
-        </td>
-        <td>
-          <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
-          <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
-        </td>
-        <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
-        <td>${p.qty}</td>
-        <td>
-          <div class="price-us">${formatUSD(p.currency === 'ARS' ? p.ppc / State.mepPrice : p.ppc)}</div>
-          <div class="price-original">${p.currency === 'ARS' ? formatARS(p.ppc) : formatUSD(p.ppc)}</div>
-        </td>
-        <td>${p.days} días</td>
-        <td>${share.toFixed(1)}%</td>
-        <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
-        <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-        <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-    // Delegación de eventos adaptada a directrices de semántica limpia sin manipuladores inline
-    tbody.querySelectorAll('.action-btn.delete').forEach(btn => {
-      btn.onclick = async (e) => {
-        const idx = parseInt(e.currentTarget.dataset.index);
-        await window.deletePos(idx);
-      };
-    });
+  // Widget 3: Mayor Variación Hoy
+  updateWidget('bestTicker', bestAsset.ticker);
+  if ($('bestPct')) {
+    $('bestPct').textContent = filtered.length > 0 ? formatPct(bestAsset.change) : '0.00%';
+    $('bestPct').className = `metric-sub ${bestAsset.change >= 0 ? 'up' : 'down'}`;
   }
 
+  // Widget 4: Activos en Cartera
+  updateWidget('posCount', filtered.length);
+
+  // 7. Disparar renderizado de gráficos
   renderDonutChart(filtered);
-  renderLineChart();
+  renderLineChart(totalUSD); // Pasamos totalUSD para el fallback del gráfico
   
   if ($('riskAlerts')) {
     runRiskEngine(filtered);
   }
+}
+
+/* ═══════════════════════════════════════════════
+   MOTOR DE RENDERIZADO DE GRÁFICOS
+═══════════════════════════════════════════════ */
+// ... (Mantén tu función renderDonutChart intacta aquí) ...
+
+function renderLineChart(currentTotalUSD = 0) {
+  const ctx = $('lineChart');
+  if (!ctx) return;
+
+  if (State.charts.line) State.charts.line.destroy();
+
+  const history = Storage.get(CONFIG.LS_HISTORY, []);
+  const filterDays = { '1m': 30, '6m': 180, '1y': 365, 'ytd': 365 }[State.activeRange] || 30;
+  const filteredHistory = history.slice(-filterDays);
+
+  let labels = filteredHistory.map(h => h.date);
+  let data = filteredHistory.map(h => h.value);
+
+  // Fallback: Si no hay historial, NO mostrar datos inventados. 
+  // Mostrar una línea plana con el valor actual o un gráfico vacío.
+  if (labels.length === 0) {
+    console.log('[Chart] Historial vacío. Mostrando fallback plano.');
+    const today = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
+    labels = [today];
+    data = [currentTotalUSD];
+  } else if (labels.length === 1) {
+    // Si solo hay un día, duplicamos el punto para que se dibuje una línea horizontal visible
+    labels.push(labels[0] + ' (Actual)');
+    data.push(currentTotalUSD);
+  }
+
+  State.charts.line = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Valor Total (USD)',
+        data,
+        borderColor: '#2D7EE8', /* Usando tu token --blue */
+        backgroundColor: 'rgba(45, 126, 232, 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.15,
+        pointRadius: data.length === 1 ? 4 : 2, // Hacer visible el punto si es uno solo
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.raw);
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#6E7683', font: { family: 'monospace' } }, grid: { display: false } },
+        y: { 
+          ticks: { 
+            color: '#6E7683', 
+            font: { family: 'monospace' },
+            callback: function(value) { return '$' + value; }
+          }, 
+          grid: { color: 'rgba(255, 255, 255, 0.05)' } 
+        }
+      }
+    }
+  });
 }
 
 /* ═══════════════════════════════════════════════
