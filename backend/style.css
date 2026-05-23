@@ -513,96 +513,82 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 /* ═══════════════════════════════════════════════════════════
    LAYER 8: PROFESSIONAL DATA TABLE (Terminal-Inspired)
 ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════
+   OPTIMIZACIÓN Y CENTRADO DE "MIS POSICIONES"
+═══════════════════════════════════════════════ */
+
+/* Contenedor Principal de la Tarjeta de la Tabla */
 .table-card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  margin-bottom: var(--space-2xl);
-}
-
-.table-wrap {
-  overflow-x: auto;
   width: 100%;
+  max-width: 100%;
+  margin: 0 auto; /* Centrado horizontal perfecto si tiene un max-width global */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  box-sizing: border-box;
+  
+  /* Si el contenedor padre (.container) es un CSS Grid, forzamos a que tome todo el ancho */
+  grid-column: 1 / -1; 
+  
+  /* Alineación vertical interna limpia */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
 }
 
-.table-card table {
+/* Alineación e Integración del Título del Bloque */
+.table-card .card-title {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border-subtle);
+  
+  /* Centrado vertical respecto a posibles iconos o botones en la misma línea */
+  display: flex;
+  align-items: center; 
+}
+
+/* Envoltura de la Tabla para Evitar Roturas de Centrado */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto; /* Permite scroll interno en mobile sin deformar la tarjeta */
+  scrollbar-width: thin; /* Scrollbar sutil para navegadores modernos */
+  scrollbar-color: var(--border-medium) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Ajuste Sutil a la Tabla para asegurar simetría */
+.table-wrap table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
-}
-
-.table-card th {
   text-align: left;
-  padding: var(--space-md) var(--space-md);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-bottom: 1px solid var(--border-medium);
+  min-width: 600px; /* Previene que las columnas se colapsen y se vuelvan ilegibles */
 }
 
-.table-card td {
-  padding: var(--space-sm) var(--space-md);
-  border-bottom: 1px solid var(--border-subtle);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+/* ═══════════════════════════════════════════════
+   REFINAMIENTOS RESPONSIVE (MEDIA QUERIES)
+═══════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .table-card {
+    padding: var(--space-sm); /* Reducimos espacio interno para ganar aire en tablets */
+    border-radius: var(--radius-sm);
+  }
 }
 
-/* Right-align numeric columns for clarity */
-.table-card td:nth-child(n+2):not(:last-child) {
-  text-align: right;
-}
-
-.table-card td:first-child {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.table-card tr:hover td {
-  background: var(--bg-surface-hover);
-}
-
-.empty-row {
-  text-align: center;
-  color: var(--text-tertiary);
-  padding: var(--space-xl) !important;
-  font-family: var(--font-sans) !important;
-}
-
-/* Badge styles */
-.type-badge {
-  font-size: 0.6rem;
-  padding: 2px 6px;
-  border-radius: 20px;
-  margin-left: var(--space-xs);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  letter-spacing: 0.02em;
-}
-
-.type-badge.bond { background: rgba(45, 126, 232, 0.15); color: var(--blue); }
-.type-badge.crypto { background: rgba(108, 92, 231, 0.15); color: var(--purple); }
-.type-badge.global { background: rgba(32, 178, 170, 0.15); color: var(--teal); }
-.type-badge.stock { background: rgba(46, 155, 107, 0.12); color: var(--green); }
-
-/* Delete Button */
-.del-btn {
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: 1rem;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  cursor: pointer;
-}
-
-.del-btn:hover {
-  background: rgba(232, 93, 93, 0.15);
-  color: var(--negative);
+@media (max-width: 480px) {
+  .table-card {
+    padding: var(--space-xs); /* Ajuste extremo para pantallas muy pequeñas */
+  }
+  
+  .table-card .card-title {
+    font-size: 0.8rem; /* Tipografía ligeramente más compacta en mobile */
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════

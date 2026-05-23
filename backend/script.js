@@ -430,12 +430,12 @@ async function renderAll() {
         tr.innerHTML = `
           <td>
             <div class="ticker-main">${p.ticker.toUpperCase()}</div>
-            <div class="asset-name">${p.name || p.ticker}</div>
           </td>
           <td>
             <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
             <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
           </td>
+  
           <td class="${changeClass}">${p.type === 'BONO' ? 'TIR: ' : ''}${formatPct(p.change)}</td>
           <td>${p.qty}</td>
           <td>
