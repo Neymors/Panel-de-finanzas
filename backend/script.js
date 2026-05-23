@@ -3,7 +3,8 @@
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
  * Version: 3.5 — Zero-Trust Suffix Isolation & Defensive Format Architecture
  * 
- * Updated: MEP inline widget with market status
+ * Fixed: Bonds data loading and error handling
+ * Removed: Unnecessary filter dependencies
  */
 'use strict';
 
@@ -15,7 +16,7 @@ const CONFIG = {
   LS_POSITIONS: 'portfolio_positions_v2',
   LS_CACHE: 'amygdale_price_cache_v1',
   LS_HISTORY: 'amygdale_history_v1',
-  CACHE_TTL: 5 * 60 * 1000,      // 5 minutos
+  CACHE_TTL: 5 * 60 * 1000,
   DEFAULT_MEP: 1200,
   HISTORY_MAX: 365,
   NOTIFICATION_MAX_VISIBLE: 5,
@@ -36,7 +37,7 @@ const API = {
 };
 
 /* ═══════════════════════════════════════════════
-   SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
+   SISTEMA DE NOTIFICACIONES (UI/UX)
 ═══════════════════════════════════════════════ */
 const NotificationManager = {
   activeHashes: new Set(),
@@ -58,7 +59,6 @@ const NotificationManager = {
     this.activeHashes.add(hash);
 
     const stack = this.getStack();
-    
     const currentCards = stack.querySelectorAll('.notification-card');
     if (currentCards.length >= CONFIG.NOTIFICATION_MAX_VISIBLE) {
       this.dismiss(currentCards[0]);
@@ -94,18 +94,14 @@ const NotificationManager = {
     };
 
     dismissTimeout = setTimeout(() => this.dismiss(card), duration);
-
     this.renderClearAllBtn();
   },
 
   dismiss(card) {
     if (!card || card.classList.contains('removing')) return;
-    
     this.activeHashes.delete(card.dataset.hash);
-    
     card.classList.remove('visible');
     card.classList.add('removing');
-    
     card.addEventListener('animationend', () => {
       if (card.parentNode) {
         card.parentNode.removeChild(card);
@@ -140,7 +136,6 @@ const NotificationManager = {
   }
 };
 
-// Helper para escapar HTML (seguridad)
 function escapeHtml(str) {
   if (!str) return '';
   return str
@@ -152,7 +147,7 @@ function escapeHtml(str) {
 }
 
 /* ═══════════════════════════════════════════════
-   ESTADO GLOBAL DE LA APLICACIÓN (STATE)
+   ESTADO GLOBAL
 ═══════════════════════════════════════════════ */
 const State = {
   positions: [],
@@ -160,14 +155,11 @@ const State = {
   mepPrice: CONFIG.DEFAULT_MEP,
   activeType: 'ALL',
   activeRange: '1M',
-  charts: {
-    donut: null,
-    line: null
-  }
+  charts: { donut: null, line: null }
 };
 
 /* ═══════════════════════════════════════════════
-   MANEJO DE ALMACENAMIENTO (LOCAL STORAGE)
+   LOCAL STORAGE
 ═══════════════════════════════════════════════ */
 const Storage = {
   get(key, fallback = []) {
@@ -189,14 +181,12 @@ const Storage = {
 };
 
 /* ═══════════════════════════════════════════════
-   MÓDULO DE ADQUISICIÓN DE PRECIOS & PROXY
+   PRECIOS & PROXY
 ═══════════════════════════════════════════════ */
 async function fetchWithProxy(baseUrl, params = {}) {
   const urlObj = new URL(baseUrl);
   Object.keys(params).forEach(key => urlObj.searchParams.append(key, params[key]));
-  
   const proxyUrl = `${CONFIG.PROXY}?url=${encodeURIComponent(urlObj.toString())}`;
-  
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -206,34 +196,22 @@ async function getMepPrice() {
   const displayEl = $('mepDisplay');
   const statusEl = $('mepStatus');
   
-  if (displayEl) {
-    displayEl.innerHTML = '<span class="loading-pulse">...</span>';
-  }
+  if (displayEl) displayEl.innerHTML = '<span class="loading-pulse">...</span>';
   if (statusEl) statusEl.textContent = '';
 
   try {
     const data = await fetchWithProxy(API.DOLARAPI);
     if (data && data.venta) {
       State.mepPrice = Number(data.venta);
-      console.log(`[API] Dólar MEP sincronizado: $${State.mepPrice}`);
-      
       if (displayEl) displayEl.textContent = formatARS(State.mepPrice);
       
-      // Determinar estado del mercado (horario ARG)
       const now = new Date();
       const horaArg = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
-      const diaSemana = horaArg.getDay(); // 0 domingo, 6 sábado
+      const diaSemana = horaArg.getDay();
       const hora = horaArg.getHours();
       const minutos = horaArg.getMinutes();
       
-      let mercadoAbierto = false;
-      if (diaSemana >= 1 && diaSemana <= 5) { // Lunes a Viernes
-        if (hora > 11 || (hora === 11 && minutos >= 0)) { // después de las 11:00
-          if (hora < 17 || (hora === 17 && minutos === 0)) { // antes de las 17:00 (inclusive)
-            mercadoAbierto = true;
-          }
-        }
-      }
+      let mercadoAbierto = (diaSemana >= 1 && diaSemana <= 5) && (hora > 11 || (hora === 11 && minutos >= 0)) && (hora < 17 || (hora === 17 && minutos === 0));
       
       if (statusEl) {
         if (mercadoAbierto) {
@@ -246,17 +224,12 @@ async function getMepPrice() {
       return;
     }
   } catch (e) {
-    console.error('Error obteniendo Dólar MEP, usando fallback:', e);
-    if (displayEl) {
-      displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)}</span>`;
-    }
+    console.error('Error Dólar MEP:', e);
+    if (displayEl) displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)}</span>`;
     if (statusEl) statusEl.textContent = '(Offline)';
   }
-  
   State.mepPrice = CONFIG.DEFAULT_MEP;
-  if (displayEl && !displayEl.innerHTML.includes('Fallback')) {
-    displayEl.textContent = formatARS(CONFIG.DEFAULT_MEP);
-  }
+  if (displayEl && !displayEl.innerHTML.includes('Fallback')) displayEl.textContent = formatARS(CONFIG.DEFAULT_MEP);
   if (statusEl && !statusEl.textContent) statusEl.textContent = '(Sin conexión)';
 }
 
@@ -277,49 +250,32 @@ async function getPrice(ticker, type) {
       const b = State.bondsDb.find(x => x.symbol.toUpperCase() === ticker.toUpperCase());
       if (b) {
         price = b.price;
-        change = b.tir; 
+        change = b.tir;
         name = b.name;
       } else {
-        throw new Error('Bono no mapeado en base de datos local');
+        throw new Error(`Bono ${ticker} no encontrado en la base local`);
       }
     } 
     else if (type === 'CRYPTO') {
       const idMap = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'USDT': 'tether', 'SOL': 'solana', 'WLFI': 'world-liberty-financial' };
       const id = idMap[ticker.toUpperCase()] || ticker.toLowerCase();
-      
-      const data = await fetchWithProxy(API.COINGECKO, {
-        ids: id,
-        vs_currencies: 'usd',
-        include_24hr_change: 'true'
-      });
-
+      const data = await fetchWithProxy(API.COINGECKO, { ids: id, vs_currencies: 'usd', include_24hr_change: 'true' });
       if (data[id]) {
         price = data[id].usd;
         change = data[id].usd_24h_change || 0;
       } else {
-        throw new Error('Formato Crypto inválido o no encontrado');
+        throw new Error('Crypto no encontrado');
       }
     } 
-    else { 
+    else {
       let symbol = ticker.toUpperCase().trim();
       const localTickers = ['ALUA', 'BYMA', 'YPFD', 'PAMP', 'GGAL', 'BMA', 'EDN', 'CEPU', 'TGSU2'];
       const storedPositions = Storage.get(CONFIG.LS_POSITIONS, []);
       const matchedStored = storedPositions.find(p => p.ticker.toUpperCase().trim() === symbol);
-      
-      const isLocalAsset = localTickers.includes(symbol) || 
-                          (matchedStored && matchedStored.currency === 'ARS') ||
-                          (State.positions.some(p => p.ticker.toUpperCase().trim() === symbol && p.currency === 'ARS'));
+      const isLocalAsset = localTickers.includes(symbol) || (matchedStored && matchedStored.currency === 'ARS') || (State.positions.some(p => p.ticker.toUpperCase().trim() === symbol && p.currency === 'ARS'));
+      if (isLocalAsset && !symbol.endsWith('.BA')) symbol = `${symbol}.BA`;
 
-      if (isLocalAsset && !symbol.endsWith('.BA')) {
-        symbol = `${symbol}.BA`;
-      }
-
-      const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, {
-        interval: '1d',
-        range: '2d'
-      });
-
-      // CORRECCIÓN: acceso seguro a Yahoo Finance
+      const data = await fetchWithProxy(`${API.YAHOO}${symbol}`, { interval: '1d', range: '2d' });
       const result = data?.chart?.result;
       if (result && result.length > 0) {
         const firstResult = result[0];
@@ -340,12 +296,11 @@ async function getPrice(ticker, type) {
           price = meta.regularMarketPrice;
           change = meta.regularMarketChangePercent || 0;
         } else {
-          throw new Error('No se encontraron precios válidos en Yahoo');
+          throw new Error('No se encontraron precios');
         }
-
         if (meta?.shortName) name = meta.shortName;
       } else {
-        throw new Error('Estructura de Yahoo Finance no interpretada');
+        throw new Error('Estructura Yahoo inválida');
       }
     }
 
@@ -353,15 +308,14 @@ async function getPrice(ticker, type) {
     cache[ticker] = updatedAsset;
     Storage.set(CONFIG.LS_CACHE, cache);
     return updatedAsset;
-
   } catch (err) {
-    console.error(`Error obteniendo ${ticker}:`, err.message);
+    console.error(`Error ${ticker}:`, err.message);
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
 
 /* ═══════════════════════════════════════════════
-   CÁLCULOS METÁLICOS Y PROCESAMIENTO
+   PROCESAMIENTO DE POSICIONES
 ═══════════════════════════════════════════════ */
 async function processPositions() {
   const processed = [];
@@ -369,7 +323,6 @@ async function processPositions() {
 
   for (const pos of State.positions) {
     const live = await getPrice(pos.ticker, pos.type);
-    
     let currentPriceUSD = live.price;
     let ppcUSD = pos.ppc;
 
@@ -380,7 +333,6 @@ async function processPositions() {
 
     const subtotalUSD = currentPriceUSD * pos.qty;
     const capitalInvertidoUSD = ppcUSD * pos.qty;
-    
     const pnlAbsUSD = subtotalUSD - capitalInvertidoUSD;
     const pnlPct = capitalInvertidoUSD > 0 ? (pnlAbsUSD / capitalInvertidoUSD) * 100 : 0;
 
@@ -404,7 +356,7 @@ async function processPositions() {
 }
 
 /* ═══════════════════════════════════════════════
-   SISTEMA DE RENDERIZADO & UI DYNAMICS
+   RENDERIZADO UI
 ═══════════════════════════════════════════════ */
 const $ = (id) => document.getElementById(id);
 
@@ -428,13 +380,10 @@ function triggerReflow(el) {
 }
 
 async function renderAll() {
-  console.log('[UI] Iniciando renderizado de métricas y tabla...');
+  console.log('[UI] Renderizando...');
 
   const metricIds = ['todayPct', 'todayAbs', 'totalGain', 'totalGainPct', 'bestTicker', 'bestPct', 'posCount', 'totalUSD', 'totalARS'];
-  metricIds.forEach(id => {
-    const el = $(id);
-    if (el) el.innerHTML = '<span class="loading-pulse">Calculando...</span>';
-  });
+  metricIds.forEach(id => { const el = $(id); if (el) el.innerHTML = '<span class="loading-pulse">Calculando...</span>'; });
 
   const { processed, totalUSD } = await processPositions();
   const filtered = processed.filter(p => State.activeType === 'ALL' || p.type === State.activeType);
@@ -458,9 +407,7 @@ async function renderAll() {
       const prevPriceUSD = changeDec === -1 ? p.currentPriceUSD : p.currentPriceUSD / (1 + changeDec);
       todayAbsUSD += (p.currentPriceUSD - prevPriceUSD) * p.qty;
 
-      if (p.change > bestAsset.change) {
-        bestAsset = { ticker: p.ticker.toUpperCase(), change: p.change };
-      }
+      if (p.change > bestAsset.change) bestAsset = { ticker: p.ticker.toUpperCase(), change: p.change };
 
       if (tbody) {
         const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
@@ -469,9 +416,7 @@ async function renderAll() {
         const pnlClass = p.pnlAbsUSD >= 0 ? 'up' : 'down';
 
         tr.innerHTML = `
-          <td>
-            <div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div>
-          </td>
+          <td><div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div></td>
           <td>
             <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
             <div class="price-original">${p.currency === 'ARS' ? formatARS(p.currentPriceOriginal) : formatUSD(p.currentPriceOriginal)}</div>
@@ -504,112 +449,75 @@ async function renderAll() {
 
   const totalGainUSD = totalUSD - totalInvestedUSD;
   const totalGainPct = totalInvestedUSD > 0 ? (totalGainUSD / totalInvestedUSD) * 100 : 0;
-  
   const prevTotalPortfolioUSD = totalUSD - todayAbsUSD;
   const todayPct = prevTotalPortfolioUSD > 0 ? (todayAbsUSD / prevTotalPortfolioUSD) * 100 : 0;
-
-  console.log(`[Cálculos] Invertido: ${totalInvestedUSD.toFixed(2)} | Actual: ${totalUSD.toFixed(2)} | PnL Día: ${todayAbsUSD.toFixed(2)}`);
-
-  const updateWidget = (id, value, isMonetary = false, isPercentage = false, cssClass = '') => {
-    const el = $(id);
-    if (!el) return;
-    
-    if (filtered.length === 0) {
-       el.innerHTML = `<span class="metric-empty">${isMonetary ? '$0.00' : (isPercentage ? '0.00%' : '—')}</span>`;
-       el.className = 'metric-val';
-       return;
-    }
-
-    el.textContent = value;
-    if (cssClass) {
-      el.className = `metric-val ${cssClass}`;
-    }
-  };
 
   if ($('totalUSD')) $('totalUSD').textContent = formatUSD(totalUSD);
   if ($('totalARS')) $('totalARS').textContent = formatARS(totalUSD * State.mepPrice);
   if ($('mepDisplay')) $('mepDisplay').textContent = formatARS(State.mepPrice);
 
+  const updateWidget = (id, value, isMonetary = false, isPercentage = false, cssClass = '') => {
+    const el = $(id);
+    if (!el) return;
+    if (filtered.length === 0) {
+      el.innerHTML = `<span class="metric-empty">${isMonetary ? '$0.00' : (isPercentage ? '0.00%' : '—')}</span>`;
+      el.className = 'metric-val';
+      return;
+    }
+    el.textContent = value;
+    if (cssClass) el.className = `metric-val ${cssClass}`;
+  };
+
   updateWidget('todayAbs', formatUSD(todayAbsUSD), true);
   updateWidget('todayPct', formatPct(todayPct), false, true, todayPct >= 0 ? 'pos' : 'neg');
-
   updateWidget('totalGain', formatUSD(totalGainUSD), true, false, totalGainUSD >= 0 ? 'pos' : 'neg');
   if ($('totalGainPct')) $('totalGainPct').textContent = formatPct(totalGainPct);
-
   updateWidget('bestTicker', bestAsset.ticker);
   if ($('bestPct')) {
     $('bestPct').textContent = filtered.length > 0 ? formatPct(bestAsset.change) : '0.00%';
     $('bestPct').className = `metric-sub ${bestAsset.change >= 0 ? 'up' : 'down'}`;
   }
-
   updateWidget('posCount', filtered.length);
 
   renderDonutChart(filtered);
   renderLineChart(totalUSD);
-  
-  if ($('riskAlerts')) {
-    runRiskEngine(filtered);
-  }
+  if ($('riskAlerts')) runRiskEngine(filtered);
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RENDERIZADO DE GRÁFICOS
+   GRÁFICOS
 ═══════════════════════════════════════════════ */
 function renderDonutChart(items) {
-  const ctx = $('pieChart'); 
+  const ctx = $('pieChart');
   if (!ctx) return;
-
   if (State.charts.donut) State.charts.donut.destroy();
-  if (items.length === 0) {
-    ctx.style.display = 'none';
-    return;
-  }
+  if (items.length === 0) { ctx.style.display = 'none'; return; }
   ctx.style.display = 'block';
 
   const labels = items.map(x => x.ticker.toUpperCase());
   const data = items.map(x => x.subtotalUSD);
-  
   const defaultColors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8'];
-  const bgColors = labels.map((label, i) => {
-    if (label === 'BTC') return '#F7931A';
-    return defaultColors[i % defaultColors.length];
-  });
+  const bgColors = labels.map((label, i) => label === 'BTC' ? '#F7931A' : defaultColors[i % defaultColors.length]);
 
   State.charts.donut = new Chart(ctx, {
     type: 'doughnut',
-    data: {
-      labels,
-      datasets: [{
-        data,
-        backgroundColor: bgColors,
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } }
-      }
-    }
+    data: { labels, datasets: [{ data, backgroundColor: bgColors, borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } } } } }
   });
 }
 
 function renderLineChart(currentTotalUSD = 0) {
   const ctx = $('lineChart');
   if (!ctx) return;
-
   if (State.charts.line) State.charts.line.destroy();
 
   const history = Storage.get(CONFIG.LS_HISTORY, []);
   const filterDays = { '1m': 30, '6m': 180, '1y': 365, 'ytd': 365 }[State.activeRange] || 30;
   const filteredHistory = history.slice(-filterDays);
-
   let labels = filteredHistory.map(h => h.date);
   let data = filteredHistory.map(h => h.value);
 
   if (labels.length === 0) {
-    console.log('[Chart] Historial vacío. Mostrando fallback plano.');
     const today = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
     labels = [today];
     data = [currentTotalUSD];
@@ -620,49 +528,16 @@ function renderLineChart(currentTotalUSD = 0) {
 
   State.charts.line = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Valor Total (USD)',
-        data,
-        borderColor: '#2962FF',
-        backgroundColor: 'rgba(41, 98, 255, 0.1)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.15,
-        pointRadius: data.length === 1 ? 4 : 2,
-      }]
-    },
+    data: { labels, datasets: [{ label: 'Valor Total (USD)', data, borderColor: '#2962FF', backgroundColor: 'rgba(41, 98, 255, 0.1)', borderWidth: 2, fill: true, tension: 0.15, pointRadius: data.length === 1 ? 4 : 2 }] },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.raw);
-            }
-          }
-        }
-      },
-      scales: {
-        x: { ticks: { color: '#6E7683', font: { family: 'monospace' } }, grid: { display: false } },
-        y: { 
-          ticks: { 
-            color: '#6E7683', 
-            font: { family: 'monospace' },
-            callback: function(value) { return '$' + value; }
-          }, 
-          grid: { color: 'rgba(255, 255, 255, 0.05)' } 
-        }
-      }
+      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => formatUSD(ctx.raw) } } },
+      scales: { x: { ticks: { color: '#6E7683', font: { family: 'monospace' } }, grid: { display: false } }, y: { ticks: { color: '#6E7683', font: { family: 'monospace' }, callback: (val) => '$' + val }, grid: { color: 'rgba(255, 255, 255, 0.05)' } } }
     }
   });
 }
 
 /* ═══════════════════════════════════════════════
-   MOTOR DE RIESGO DE CARTERA
+   RIESGO
 ═══════════════════════════════════════════════ */
 function runRiskEngine(processedPositions) {
   const alertsContainer = $('riskAlerts');
@@ -675,18 +550,10 @@ function runRiskEngine(processedPositions) {
   processedPositions.forEach(p => {
     const share = totalUSD > 0 ? (p.subtotalUSD / totalUSD) * 100 : 0;
     if (share > 40 && processedPositions.length > 1) {
-      alerts.push({
-        type: 'warning',
-        title: 'Alta Concentración',
-        desc: `El activo **${p.ticker.toUpperCase()}** representa el ${share.toFixed(1)}% de tu cartera.`
-      });
+      alerts.push({ type: 'warning', title: 'Alta Concentración', desc: `El activo **${p.ticker.toUpperCase()}** representa el ${share.toFixed(1)}% de tu cartera.` });
     }
     if (p.pnlPct < -15) {
-      alerts.push({
-        type: 'danger',
-        title: 'Alerta Stop-Loss Crítico',
-        desc: `El activo **${p.ticker.toUpperCase()}** acumula una caída del ${p.pnlPct.toFixed(1)}%.`
-      });
+      alerts.push({ type: 'danger', title: 'Alerta Stop-Loss Crítico', desc: `El activo **${p.ticker.toUpperCase()}** acumula una caída del ${p.pnlPct.toFixed(1)}%.` });
     }
   });
 
@@ -694,7 +561,6 @@ function runRiskEngine(processedPositions) {
     alertsContainer.innerHTML = `<div class="no-risk">Todos los parámetros de riesgo estables.</div>`;
     return;
   }
-
   alerts.forEach(a => {
     const box = document.createElement('div');
     box.className = `risk-box ${a.type}`;
@@ -704,7 +570,7 @@ function runRiskEngine(processedPositions) {
 }
 
 /* ═══════════════════════════════════════════════
-   WIDGET DE BONOS INTELIGENTES
+   BONOS WIDGET (corregido)
 ═══════════════════════════════════════════════ */
 async function renderBondsInsightWidget() {
   const container = $('bondsInsightContainer');
@@ -712,13 +578,12 @@ async function renderBondsInsightWidget() {
 
   try {
     const res = await fetch(API.BONDS_TOP_TIR);
-    if (!res.ok) throw new Error('Error al consultar el top de TIR');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     
-    if (json.success && json.data) {
+    if (json.success && json.data && json.data.length > 0) {
       const topBonds = json.data.slice(0, 4);
       let html = '<div class="bonds-insight-grid">';
-      
       topBonds.forEach(b => {
         html += `
           <div class="bond-insight-card">
@@ -730,16 +595,17 @@ async function renderBondsInsightWidget() {
       html += '</div>';
       container.innerHTML = html;
     } else {
-      container.innerHTML = '<div class="error-msg">No hay datos de bonos disponibles.</div>';
+      container.innerHTML = '<div class="error-msg">⚠️ No se recibieron datos de bonos. Verifique el servidor.</div>';
+      console.warn('[Bonds] Respuesta sin datos:', json);
     }
   } catch (err) {
-    console.error(err);
-    container.innerHTML = `<div class="error-msg">No se pudo cargar el análisis de renta fija.</div>`;
+    console.error('[Bonds] Error cargando widget:', err);
+    container.innerHTML = `<div class="error-msg">❌ Error cargando bonos: ${err.message}</div>`;
   }
 }
 
 /* ═══════════════════════════════════════════════
-   MANEJO DE EVENTOS Y FORMULARIOS (HANDLERS)
+   FORMULARIO
 ═══════════════════════════════════════════════ */
 async function handleAdd(e) {
   e.preventDefault();
@@ -762,7 +628,7 @@ async function handleAdd(e) {
   const rawType = typeActiveBtn ? typeActiveBtn.dataset.type : 'usd';
 
   if (!ticker || isNaN(qty) || qty <= 0 || isNaN(ppc) || ppc <= 0) {
-    if (errorDiv) errorDiv.textContent = 'Completa todos los campos obligatorios con valores positivos.';
+    if (errorDiv) errorDiv.textContent = 'Complete todos los campos con valores positivos.';
     return;
   }
 
@@ -790,36 +656,8 @@ async function handleAdd(e) {
   avgInput.value = '';
   if (daysInput) daysInput.value = '0';
 
-  NotificationManager.show('success', 'Posición Añadida', `Se integró **${ticker}** de forma exitosa.`);
+  NotificationManager.show('success', 'Posición Añadida', `Se integró ${ticker} correctamente.`);
   await renderAll();
-}
-
-function injectControls() {
-  const container = $('controlsContainer');
-  if (!container) return;
-
-  container.innerHTML = `
-    <div class="segment-controls">
-      <div class="control-card">
-        <div class="card-title">Filtro de Segmentación</div>
-        <div class="filter-row">
-          <button class="filter-btn active" data-filter="ALL">Todos</button>
-          <button class="filter-btn" data-filter="ACCION">Acciones/CEDEARs</button>
-          <button class="filter-btn" data-filter="BONO">Bonos soberanos</button>
-          <button class="filter-btn" data-filter="CRYPTO">Criptoactivos</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      State.activeType = btn.dataset.filter;
-      await renderAll();
-    });
-  });
 }
 
 function initClocks() {
@@ -833,22 +671,27 @@ function initClocks() {
 }
 
 /* ═══════════════════════════════════════════════
-   PUNTO DE ENTRADA INICIALIZADOR (DOM READY)
+   INICIALIZACIÓN
 ═══════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', async () => {
   initClocks();
   
+  // Cargar base de datos de bonos
   try {
     const bondsRes = await fetch(API.BONDS_DATA);
-    if (!bondsRes.ok) throw new Error('Error al sincronizar base de datos de bonos');
+    if (!bondsRes.ok) throw new Error(`HTTP ${bondsRes.status}`);
     const bondsJson = await bondsRes.json();
-    if (bondsJson.success) {
+    if (bondsJson.success && Array.isArray(bondsJson.data)) {
       State.bondsDb = bondsJson.data;
-      console.log(`[API] Sincronizados ${State.bondsDb.length} bonos en memoria.`);
+      console.log(`[API] ${State.bondsDb.length} bonos sincronizados.`);
+    } else {
+      console.warn('[API] Respuesta de bonos inválida:', bondsJson);
+      State.bondsDb = [];
     }
   } catch (e) {
-    console.error('Error inicial:', e);
-    NotificationManager.show('error', 'Fallo de sincronización', 'No se pudo conectar con el motor de bonos.');
+    console.error('Error cargando bonos:', e);
+    NotificationManager.show('error', 'Error de bonos', 'No se pudo cargar la base de bonos. Algunas funciones pueden estar limitadas.');
+    State.bondsDb = [];
   }
 
   await getMepPrice();
@@ -865,8 +708,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   await renderAll();
-  injectControls();
   
+  // Cargar widget de bonos (top TIR)
   if ($('bondsInsightContainer')) await renderBondsInsightWidget();
 
   const addBtn = $('addBtn');
