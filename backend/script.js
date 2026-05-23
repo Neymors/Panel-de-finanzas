@@ -198,16 +198,37 @@ async function fetchWithProxy(baseUrl, params = {}) {
 }
 
 async function getMepPrice() {
+  const displayEl = $('mepDisplay');
+  const timeEl = $('mepTime');
+  
+  // Estado inicial: Loading
+  if (displayEl) {
+    displayEl.innerHTML = '<span class="loading-pulse">Calculando...</span>';
+  }
+
   try {
     const data = await fetchWithProxy(API.DOLARAPI);
     if (data && data.venta) {
       State.mepPrice = Number(data.venta);
       console.log(`[API] Dólar MEP sincronizado: $${State.mepPrice}`);
+      
+      // Renderizado exitoso
+      if (displayEl) displayEl.textContent = formatARS(State.mepPrice);
+      if (timeEl) {
+        const now = new Date();
+        timeEl.textContent = `Actualizado ${now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+      }
       return;
     }
   } catch (e) {
-    console.error('Error obtuvo Dólar MEP, usando fallback:', e);
+    console.error('Error obteniendo Dólar MEP, usando fallback:', e);
+    // Estado de Error visual
+    if (displayEl) {
+       displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)} (Fallback)</span>`;
+    }
+    if (timeEl) timeEl.textContent = 'Modo offline';
   }
+  
   State.mepPrice = CONFIG.DEFAULT_MEP;
 }
 
@@ -235,7 +256,7 @@ async function getPrice(ticker, type) {
       }
     } 
     else if (type === 'CRYPTO') {
-      const idMap = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'USDT': 'tether', 'SOL': 'solana' };
+      const idMap = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'USDT': 'tether', 'SOL': 'solana', 'WLFI': 'world-liberty-financial' };
       const id = idMap[ticker.toUpperCase()] || ticker.toLowerCase();
       
       const data = await fetchWithProxy(API.COINGECKO, {
@@ -271,10 +292,10 @@ async function getPrice(ticker, type) {
         range: '2d'
       });
 
-      const result = data?.chart?.result?.[0];
+      const result = data?.chart?.result?.;
       if (result) {
         const meta = result.meta;
-        const indicators = result.indicators?.quote?.[0];
+        const indicators = result.indicators?.quote?.;
         const prices = indicators?.close || [];
         const cleanPrices = prices.filter(v => v !== null && v !== undefined);
         
@@ -305,8 +326,8 @@ async function getPrice(ticker, type) {
     return updatedAsset;
 
   } catch (err) {
-    console.error(`⚠️ Error obteniendo ${ticker}:`, err.message);
-    // Control de fallos: Se inyecta 'change: 0' para neutralizar interrupciones en cascada de formatPct
+    console.error(`Error obteniendo ${ticker}:`, err.message);
+    // Control de fallos: Se inyecta 'change: 0' para neutralizar interrupciones en cascada
     return cache[ticker] || { price: 0, change: 0, name: ticker, ts: 0 };
   }
 }
