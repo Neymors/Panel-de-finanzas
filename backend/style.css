@@ -1,7 +1,7 @@
 /**
  * Amygdalé — Financial Dashboard & Risk Control
  * Premium UI System | Cyberpunk Minimalism + Institutional Finance
- * Version: 3.0 (Design System Migration) + Notification Center
+ * Version: 3.0 (Design System Migration) + Notification Center + MEP Line Widget
  * 
  * Design Tokens | Layered Architecture | Dark Mode First
  */
@@ -189,7 +189,8 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 #todayAbs, #totalGain, #bestPct, .table-card td,
 .add-form input, .type-btn, .ctrl-btn, .range-btn,
 .del-btn, .type-badge, #sourceRow, .chart-legend span,
-.notification-message, .notification-title, .notification-time {
+.notification-message, .notification-title, .notification-time,
+.mep-widget {
   font-family: var(--font-mono);
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
@@ -223,6 +224,8 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 
 .header-info {
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .clock-row {
@@ -236,6 +239,35 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 
 .clock-sep {
   opacity: 0.4;
+}
+
+/* MEP Widget en una sola línea */
+.mep-widget {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.mep-label {
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.mep-value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.mep-status {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-left: 0.2rem;
 }
 
 #sourceRow {
@@ -513,31 +545,21 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 /* ═══════════════════════════════════════════════════════════
    LAYER 8: PROFESSIONAL DATA TABLE (Terminal-Inspired)
 ═══════════════════════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════
-   OPTIMIZACIÓN Y CENTRADO DE "MIS POSICIONES"
-═══════════════════════════════════════════════ */
-
-/* Contenedor Principal de la Tarjeta de la Tabla */
 .table-card {
   width: 100%;
   max-width: 100%;
-  margin: 0 auto; /* Centrado horizontal perfecto si tiene un max-width global */
+  margin: 0 auto;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   box-sizing: border-box;
-  
-  /* Si el contenedor padre (.container) es un CSS Grid, forzamos a que tome todo el ancho */
-  grid-column: 1 / -1; 
-  
-  /* Alineación vertical interna limpia */
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
 }
 
-/* Alineación e Integración del Título del Bloque */
 .table-card .card-title {
   font-family: var(--font-mono);
   font-size: 0.9rem;
@@ -548,89 +570,112 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   margin: 0;
   padding-bottom: var(--space-xs);
   border-bottom: 1px solid var(--border-subtle);
-  
-  /* Centrado vertical respecto a posibles iconos o botones en la misma línea */
   display: flex;
-  align-items: center; 
+  align-items: center;
 }
 
-/* Envoltura de la Tabla para Evitar Roturas de Centrado */
 .table-wrap {
   width: 100%;
-  overflow-x: auto; /* Permite scroll interno en mobile sin deformar la tarjeta */
-  scrollbar-width: thin; /* Scrollbar sutil para navegadores modernos */
+  overflow-x: auto;
+  scrollbar-width: thin;
   scrollbar-color: var(--border-medium) transparent;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Ajuste Sutil a la Tabla para asegurar simetría */
 .table-wrap table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  min-width: 600px; /* Previene que las columnas se colapsen y se vuelvan ilegibles */
+  min-width: 600px;
 }
 
-/* ═══════════════════════════════════════════════
-   REFINAMIENTOS RESPONSIVE (MEDIA QUERIES)
-═══════════════════════════════════════════════ */
-@media (max-width: 768px) {
-  .table-card {
-    padding: var(--space-sm); /* Reducimos espacio interno para ganar aire en tablets */
-    border-radius: var(--radius-sm);
-  }
+.table-card th,
+.table-card td {
+  padding: var(--space-sm) var(--space-xs);
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-@media (max-width: 480px) {
-  .table-card {
-    padding: var(--space-xs); /* Ajuste extremo para pantallas muy pequeñas */
-  }
-  
-  .table-card .card-title {
-    font-size: 0.8rem; /* Tipografía ligeramente más compacta en mobile */
-  }
-}
-
-.suggestion-box {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-medium);
-  z-index: 1000;
-  max-height: 200px;
-  overflow-y: auto;
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-}
-
-.suggestion-item {
-  padding: var(--space-sm);
-  cursor: pointer;
-  color: var(--text-primary);
+.table-card th {
+  color: var(--text-tertiary);
+  font-weight: 500;
   font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.suggestion-item:hover {
+.table-card td {
+  color: var(--text-primary);
+}
+
+.table-card tr:hover td {
   background: var(--bg-surface-hover);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LAYER 9: FOOTER CONTROLS (Import/Export)
-═══════════════════════════════════════════════════════════ */
-.footer-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-md);
-  margin-top: var(--space-xl);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--border-subtle);
+/* Price and P&L coloring */
+.price-original {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
 }
 
-.ctrl-btn {
+.up {
+  color: var(--positive);
+}
+.down {
+  color: var(--negative);
+}
+
+.action-btn.delete {
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1rem;
+  padding: 0 var(--space-xs);
+  transition: color var(--transition-fast);
+}
+.action-btn.delete:hover {
+  color: var(--negative);
+}
+
+.empty-row {
+  text-align: center;
+  padding: var(--space-xl);
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .table-card { padding: var(--space-sm); border-radius: var(--radius-sm); }
+}
+@media (max-width: 480px) {
+  .table-card { padding: var(--space-xs); }
+  .table-card .card-title { font-size: 0.8rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LAYER 9: CONTROLS & FILTERS
+═══════════════════════════════════════════════════════════ */
+.segment-controls {
+  margin: var(--space-xl) 0;
+}
+
+.control-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.filter-btn {
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  padding: var(--space-sm) var(--space-lg);
+  padding: var(--space-xs) var(--space-md);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -638,14 +683,95 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   transition: all var(--transition-fast);
 }
 
-.ctrl-btn:hover {
+.filter-btn.active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+
+.filter-btn:hover:not(.active) {
   background: var(--bg-surface-hover);
-  border-color: var(--border-medium);
   color: var(--text-primary);
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LAYER 10: NOTIFICATION STACK & CARDS (Institutional Alerts)
+   LAYER 10: RISK ALERTS
+═══════════════════════════════════════════════════════════ */
+.risk-alerts-container {
+  margin-top: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.risk-box {
+  padding: var(--space-md);
+  border-left: 3px solid;
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.risk-box.warning {
+  border-left-color: var(--amber);
+  background: rgba(232, 168, 60, 0.08);
+  color: var(--amber);
+}
+.risk-box.danger {
+  border-left-color: var(--red);
+  background: rgba(232, 93, 93, 0.08);
+  color: var(--red);
+}
+.no-risk {
+  padding: var(--space-md);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LAYER 11: BONDS INSIGHT WIDGET
+═══════════════════════════════════════════════════════════ */
+.bonds-insight {
+  margin-top: var(--space-lg);
+}
+
+.bonds-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-md);
+}
+
+.bond-insight-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  text-align: center;
+  transition: all var(--transition-fast);
+}
+
+.bond-insight-card:hover {
+  border-color: var(--border-medium);
+  background: var(--bg-surface-hover);
+}
+
+.bond-insight-sym {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: var(--space-xs);
+}
+
+.bond-insight-metric {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LAYER 12: NOTIFICATION STACK & CARDS
 ═══════════════════════════════════════════════════════════ */
 .notification-stack {
   position: fixed;
@@ -826,7 +952,7 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   100% {
     opacity: 0;
     transform: translateX(20px);
-    margin-top: -100px; /* Ayuda a que las demás suban suavemente */
+    margin-top: -100px;
   }
 }
 
@@ -836,16 +962,14 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LAYER 11: UTILITIES & MICROINTERACTIONS (Calm & Surgical)
+   LAYER 13: UTILITIES & MICROINTERACTIONS
 ═══════════════════════════════════════════════════════════ */
-/* Focus visible for keyboard navigation */
 :focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-/* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -859,19 +983,16 @@ h1, h2, h3, .card-title, .total-label, .metric-label,
   }
 }
 
-/* subtle glow only for active UI controls */
 button:active,
 .range-btn.active,
 .type-btn.active {
   box-shadow: 0 0 0 1px var(--blue-glow);
 }
 
-/* Tooltips and extra */
 [title] {
   cursor: help;
 }
 
-/* Estado de carga para métricas */
 .loading-pulse {
   display: inline-block;
   color: var(--text-tertiary);
@@ -885,7 +1006,6 @@ button:active,
   50% { opacity: 1; }
 }
 
-/* Fallback amigable para métricas vacías */
 .metric-empty {
   color: var(--text-tertiary);
   font-size: 1.2rem;
@@ -893,7 +1013,7 @@ button:active,
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LAYER 12: RESPONSIVE REFINEMENTS
+   LAYER 14: RESPONSIVE REFINEMENTS
 ═══════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
   .header {
@@ -907,28 +1027,28 @@ button:active,
   .metric-val, .total-amount {
     font-size: 1.6rem;
   }
-  .table-card th, .table-card td {
-    padding: var(--space-sm) var(--space-xs);
-    font-size: 0.7rem;
-  }
   .type-selector {
     flex-wrap: wrap;
+  }
+  .mep-widget {
+    font-size: 0.7rem;
+  }
+  .mep-value {
+    font-size: 0.8rem;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LAYER 13: CHARTS SPECIFIC / HUD TOUCHES
+   LAYER 15: CHARTS SPECIFIC / HUD TOUCHES
 ═══════════════════════════════════════════════════════════ */
 canvas {
   background: transparent;
 }
 
-/* subtle chart grid lines */
 .chart-container canvas + canvas {
   mix-blend-mode: normal;
 }
 
-/* extra polish for small screens */
 @media (max-width: 480px) {
   .chart-container {
     height: 220px;

@@ -6,6 +6,7 @@
     <title>Amygdalé — Financial Dashboard & Risk Control</title>
     <meta name="description" content="Dashboard financiero personal Local-First con seguimiento de bonos, acciones y criptoactivos.">
     
+    <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
     
     <link rel="stylesheet" href="style.css">
@@ -26,9 +27,11 @@
                     <span class="clock-sep">|</span>
                     <span id="clockNY">NY --:--:--</span>
                 </div>
-                <div class="mep-widget" style="display: flex; flex-direction: column; align-items: flex-end;">
-                    <div>Dólar MEP: <span id="mepDisplay" class="metric-val" style="font-size: 1.2rem;">--</span></div>
-                    <div id="mepTime" class="metric-sub" style="font-size: 0.7rem; margin-top: 2px;"></div>
+                <!-- Widget MEP en una sola línea -->
+                <div class="mep-widget">
+                    <span class="mep-label">Dólar MEP:</span>
+                    <span id="mepDisplay" class="mep-value">--</span>
+                    <span id="mepStatus" class="mep-status"></span>
                 </div>
             </div>
             <div class="total-block">
@@ -38,6 +41,7 @@
             </div>
         </header>
 
+        <!-- Métricas rápidas -->
         <section class="metrics-grid">
             <div class="metric-card">
                 <div class="metric-label">Rendimiento Diario</div>
@@ -61,11 +65,12 @@
             </div>
         </section>
 
+        <!-- Gráficos -->
         <section class="charts-grid">
             <div class="chart-card">
                 <div class="card-title">Distribución de Activos</div>
                 <div class="chart-container pie-wrap">
-                    <canvas id="pieChart"></canvas>
+                    <canvas id="pieChart" aria-label="Gráfico de distribución de activos" role="img"></canvas>
                 </div>
                 <div id="pieLegend" class="chart-legend"></div>
             </div>
@@ -81,27 +86,27 @@
                     </div>
                 </div>
                 <div class="chart-container">
-                    <canvas id="lineChart"></canvas>
+                    <canvas id="lineChart" aria-label="Gráfico de evolución del patrimonio" role="img"></canvas>
                 </div>
             </div>
         </section>
 
+        <!-- Formulario para agregar posición -->
         <section class="add-card">
             <div class="card-title">Operar / Agregar Posición</div>
             
-            <div class="type-selector">
-                <button type="button" class="type-btn active" data-type="ar">Mercado Local (ARS/Bonos)</button>
-                <button type="button" class="type-btn" data-type="usd">Mercado Internacional (USD)</button>
-                <button type="button" class="type-btn" data-type="crypto">Criptoactivos (Crypto)</button>
+            <div class="type-selector" role="tablist">
+                <button type="button" class="type-btn active" data-type="ar" role="tab">Mercado Local (ARS/Bonos)</button>
+                <button type="button" class="type-btn" data-type="usd" role="tab">Mercado Internacional (USD)</button>
+                <button type="button" class="type-btn" data-type="crypto" role="tab">Criptoactivos (Crypto)</button>
             </div>
 
             <form id="addForm" class="add-form" autocomplete="off">
-                <input type="text" id="tickerInput" placeholder="Nombre" required>
-                    <div class="input-group" style="position: relative;">
-                        <input type="text" id="tickerInput" placeholder="Ticker (ej: AAPL)" required>
-                        <div id="suggestionBox" class="suggestion-box" style="display: none;"></div>
-                    </div>
-                <input type="number" id="qtyInput" placeholder="Cantidad numérica" step="any" min="00000" required>
+                <div class="input-group" style="position: relative; flex: 1;">
+                    <input type="text" id="tickerInput" placeholder="Ticker (ej: AAPL, GD30, BTC)" required>
+                    <div id="suggestionBox" class="suggestion-box" style="display: none;"></div>
+                </div>
+                <input type="number" id="qtyInput" placeholder="Cantidad numérica" step="any" min="0.0001" required>
                 <input type="number" id="avgInput" placeholder="Precio de compra (PPC)" step="any" min="0.0000" required>
                 <input type="number" id="daysInput" placeholder="Días de tenencia" value="0" min="0">
                 <button type="button" id="addBtn" class="add-btn">+ Agregar</button>
@@ -109,6 +114,7 @@
             <div id="addError" class="error-msg"></div>
         </section>
 
+        <!-- Tabla de posiciones -->
         <section class="table-card">
             <div class="card-title">Mis Posiciones</div>
             <div class="table-wrap">
@@ -133,6 +139,15 @@
                 </table>
             </div>
         </section>
+
+        <!-- Contenedor para filtros (se inyecta con JS) -->
+        <div id="controlsContainer" class="controls-container" style="margin-top: 1rem;"></div>
+
+        <!-- Contenedor para alertas de riesgo (se inyecta con JS) -->
+        <div id="riskAlerts" class="risk-alerts-container" style="margin-top: 1.5rem;"></div>
+
+        <!-- Contenedor para widget de bonos (se inyecta con JS) -->
+        <div id="bondsInsightContainer" class="bonds-insight" style="margin-top: 1.5rem;"></div>
 
     </div>
 

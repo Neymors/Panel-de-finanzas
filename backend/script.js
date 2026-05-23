@@ -2,6 +2,8 @@
  * Amygdalé — Financial Dashboard & Risk Control
  * Vanilla JS | Local-First | Amygdalé API + Yahoo + CoinGecko + DolarApi
  * Version: 3.5 — Zero-Trust Suffix Isolation & Defensive Format Architecture
+ * 
+ * Updated: MEP inline widget with market status
  */
 'use strict';
 
@@ -32,9 +34,6 @@ const API = {
   COINGECKO: 'https://api.coingecko.com/api/v3/simple/price',
   YAHOO: 'https://query1.finance.yahoo.com/v8/finance/chart/'
 };
-
-const tickerInput = document.getElementById('tickerInput');
-const suggestionBox = document.getElementById('suggestionBox');
 
 /* ═══════════════════════════════════════════════
    SISTEMA DE NOTIFICACIONES EMBAJADOR (UI/UX)
@@ -70,15 +69,15 @@ const NotificationManager = {
     card.setAttribute('role', 'alert');
     card.dataset.hash = hash;
 
-    const icons = { success: 'V', error: 'X', warning: '!', info: 'i' };
+    const icons = { success: '✓', error: '✗', warning: '!', info: 'ℹ' };
 
     card.innerHTML = `
-      <div class="notification-icon">${icons[type] || 'i'}</div>
+      <div class="notification-icon">${icons[type] || 'ℹ'}</div>
       <div class="notification-content">
-        <div class="notification-title">${title}</div>
-        <div class="notification-message">${message}</div>
+        <div class="notification-title">${escapeHtml(title)}</div>
+        <div class="notification-message">${escapeHtml(message)}</div>
       </div>
-      <button class="notification-dismiss" aria-label="Cerrar notificación">x</button>
+      <button class="notification-dismiss" aria-label="Cerrar notificación">×</button>
     `;
 
     stack.appendChild(card);
@@ -141,6 +140,17 @@ const NotificationManager = {
   }
 };
 
+// Helper para escapar HTML (seguridad)
+function escapeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* ═══════════════════════════════════════════════
    ESTADO GLOBAL DE LA APLICACIÓN (STATE)
 ═══════════════════════════════════════════════ */
@@ -194,11 +204,12 @@ async function fetchWithProxy(baseUrl, params = {}) {
 
 async function getMepPrice() {
   const displayEl = $('mepDisplay');
-  const timeEl = $('mepTime');
+  const statusEl = $('mepStatus');
   
   if (displayEl) {
-    displayEl.innerHTML = '<span class="loading-pulse">Calculando...</span>';
+    displayEl.innerHTML = '<span class="loading-pulse">...</span>';
   }
+  if (statusEl) statusEl.textContent = '';
 
   try {
     const data = await fetchWithProxy(API.DOLARAPI);
@@ -207,21 +218,46 @@ async function getMepPrice() {
       console.log(`[API] Dólar MEP sincronizado: $${State.mepPrice}`);
       
       if (displayEl) displayEl.textContent = formatARS(State.mepPrice);
-      if (timeEl) {
-        const now = new Date();
-        timeEl.textContent = `Actualizado ${now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+      
+      // Determinar estado del mercado (horario ARG)
+      const now = new Date();
+      const horaArg = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
+      const diaSemana = horaArg.getDay(); // 0 domingo, 6 sábado
+      const hora = horaArg.getHours();
+      const minutos = horaArg.getMinutes();
+      
+      let mercadoAbierto = false;
+      if (diaSemana >= 1 && diaSemana <= 5) { // Lunes a Viernes
+        if (hora > 11 || (hora === 11 && minutos >= 0)) { // después de las 11:00
+          if (hora < 17 || (hora === 17 && minutos === 0)) { // antes de las 17:00 (inclusive)
+            mercadoAbierto = true;
+          }
+        }
+      }
+      
+      if (statusEl) {
+        if (mercadoAbierto) {
+          const timeStr = horaArg.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+          statusEl.textContent = `(Actualizado ${timeStr})`;
+        } else {
+          statusEl.textContent = '(Mercado Cerrado)';
+        }
       }
       return;
     }
   } catch (e) {
     console.error('Error obteniendo Dólar MEP, usando fallback:', e);
     if (displayEl) {
-       displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)} (Fallback)</span>`;
+      displayEl.innerHTML = `<span class="neg">${formatARS(CONFIG.DEFAULT_MEP)}</span>`;
     }
-    if (timeEl) timeEl.textContent = 'Modo offline';
+    if (statusEl) statusEl.textContent = '(Offline)';
   }
   
   State.mepPrice = CONFIG.DEFAULT_MEP;
+  if (displayEl && !displayEl.innerHTML.includes('Fallback')) {
+    displayEl.textContent = formatARS(CONFIG.DEFAULT_MEP);
+  }
+  if (statusEl && !statusEl.textContent) statusEl.textContent = '(Sin conexión)';
 }
 
 async function getPrice(ticker, type) {
@@ -283,7 +319,7 @@ async function getPrice(ticker, type) {
         range: '2d'
       });
 
-      // CORRECCIÓN: eliminar punto y coma después de ?.
+      // CORRECCIÓN: acceso seguro a Yahoo Finance
       const result = data?.chart?.result;
       if (result && result.length > 0) {
         const firstResult = result[0];
@@ -411,7 +447,7 @@ async function renderAll() {
   if (tbody) tbody.innerHTML = '';
 
   if (filtered.length === 0) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="empty-row">Agregá tu primera posición para iniciar el análisis ↑</td></tr>`;
     bestAsset = { ticker: '—', change: 0 };
   } else {
     filtered.forEach((p, index) => {
@@ -434,7 +470,7 @@ async function renderAll() {
 
         tr.innerHTML = `
           <td>
-            <div class="ticker-main">${p.ticker.toUpperCase()}</div>
+            <div class="ticker-main">${escapeHtml(p.ticker.toUpperCase())}</div>
           </td>
           <td>
             <div class="price-us">${formatUSD(p.currentPriceUSD)}</div>
@@ -450,7 +486,7 @@ async function renderAll() {
           <td>${share.toFixed(1)}%</td>
           <td class="${pnlClass}">${formatUSD(p.pnlAbsUSD)}</td>
           <td class="${pnlClass}">${formatPct(p.pnlPct)}</td>
-          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">X</button></td>
+          <td><button class="action-btn delete" data-index="${index}" aria-label="Eliminar posición">✕</button></td>
         `;
         tbody.appendChild(tr);
       }
@@ -662,7 +698,7 @@ function runRiskEngine(processedPositions) {
   alerts.forEach(a => {
     const box = document.createElement('div');
     box.className = `risk-box ${a.type}`;
-    box.innerHTML = `<strong>${a.title}:</strong> ${a.desc}`;
+    box.innerHTML = `<strong>${escapeHtml(a.title)}:</strong> ${escapeHtml(a.desc)}`;
     alertsContainer.appendChild(box);
   });
 }
@@ -686,15 +722,18 @@ async function renderBondsInsightWidget() {
       topBonds.forEach(b => {
         html += `
           <div class="bond-insight-card">
-            <div class="bond-insight-sym">${b.symbol}</div>
+            <div class="bond-insight-sym">${escapeHtml(b.symbol)}</div>
             <div class="bond-insight-metric">TIR: <span class="up">${b.tir.toFixed(1)}%</span></div>
           </div>
         `;
       });
       html += '</div>';
       container.innerHTML = html;
+    } else {
+      container.innerHTML = '<div class="error-msg">No hay datos de bonos disponibles.</div>';
     }
   } catch (err) {
+    console.error(err);
     container.innerHTML = `<div class="error-msg">No se pudo cargar el análisis de renta fija.</div>`;
   }
 }
@@ -707,14 +746,14 @@ async function handleAdd(e) {
   const errorDiv = $('addError');
   if (errorDiv) errorDiv.textContent = '';
 
-  const tickerInput = $('tickerInput');
+  const tickerInputEl = $('tickerInput');
   const qtyInput = $('qtyInput');
   const avgInput = $('avgInput');
   const daysInput = $('daysInput');
 
-  if (!tickerInput || !qtyInput || !avgInput) return;
+  if (!tickerInputEl || !qtyInput || !avgInput) return;
 
-  const ticker = tickerInput.value.trim().toUpperCase();
+  const ticker = tickerInputEl.value.trim().toUpperCase();
   const qty = parseFloat(qtyInput.value);
   const ppc = parseFloat(avgInput.value);
   const days = parseInt(daysInput ? daysInput.value : 0) || 0;
@@ -746,7 +785,7 @@ async function handleAdd(e) {
   delete cache[ticker];
   Storage.set(CONFIG.LS_CACHE, cache);
 
-  tickerInput.value = '';
+  tickerInputEl.value = '';
   qtyInput.value = '';
   avgInput.value = '';
   if (daysInput) daysInput.value = '0';
